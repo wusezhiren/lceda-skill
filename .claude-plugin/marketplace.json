@@ -4,22 +4,15 @@
     "name": "wusezhiren"
   },
   "metadata": {
-    "description": "PCB 从需求到嘉立创下单的 Claude Code skills：嘉立创EDA 脚本化设计（jlceda-pcb）与 KiCad 全流程（pcb-jlc-pipeline）",
-    "version": "1.1.0"
+    "description": "PCB 从需求到嘉立创下单的 Claude Code skill：嘉立创EDA 脚本化设计（jlceda-pcb）",
+    "version": "2.0.0"
   },
   "plugins": [
     {
       "name": "jlceda-pcb",
       "source": "./plugins/jlceda-pcb",
-      "description": "用嘉立创EDA专业版官方命令行脚本化画原理图/PCB、DRC、导出 Gerber/BOM/坐标并直接下单；支持导入 KiCad 工程",
-      "version": "1.1.0",
-      "category": "hardware"
-    },
-    {
-      "name": "pcb-jlc-pipeline",
-      "source": "./plugins/pcb-jlc-pipeline",
-      "description": "KiCad 9 + SKiDL + Freerouting 的 PCB 全流程：原理图、嘉立创选料、摆件、自动布线、DRC 清零、导出嘉立创下单文件",
-      "version": "1.1.0",
+      "description": "用嘉立创EDA专业版官方命令行脚本化画原理图/PCB、DRC、导出 Gerber/BOM/坐标并下单；含免费打样券规则、下单助手；支持导入 KiCad 工程",
+      "version": "2.0.0",
       "category": "hardware"
     }
   ]
