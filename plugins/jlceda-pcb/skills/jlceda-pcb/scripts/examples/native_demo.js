@@ -9,7 +9,7 @@ const proj = await eda.dmt_Project.createProject(name, name, team);
 must(proj, '新建工程失败（同名工程已存在？）');
 await eda.dmt_Project.openProject(proj);
 await sleep(1500);
-const board = (await eda.dmt_Board.getAllBoardsInfo())[0];
+const board = await firstBoard();
 const sch = await eda.dmt_Schematic.getSchematicInfo(board.schematic.uuid);
 await eda.dmt_EditorControl.openDocument(sch.page[0].uuid);
 await sleep(800);

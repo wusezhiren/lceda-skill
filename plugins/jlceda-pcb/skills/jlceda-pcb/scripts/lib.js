@@ -83,7 +83,7 @@ async function clickButton(texts, timeoutMs = 15000) {
 
 // 原理图 → PCB 导入变更，自动点“应用修改”
 async function importToPcb() {
-	const b = (await eda.dmt_Board.getAllBoardsInfo())[0];
+	const b = await firstBoard();
 	await eda.dmt_EditorControl.openDocument(b.pcb.uuid);
 	await sleep(1000);
 	const p = eda.pcb_Document.importChanges(b.schematic.uuid);
@@ -97,8 +97,19 @@ async function importToPcb() {
 const MM = 39.3700787;              // 1mm = 39.37mil（PCB 坐标单位为 mil）
 const mm = v => v * MM;
 
+// 刚 openProject 后板子信息要过一会儿才加载出来，轮询等待
+async function firstBoard(timeoutMs = 30000) {
+	const t0 = Date.now();
+	while (Date.now() - t0 < timeoutMs) {
+		const b = ((await eda.dmt_Board.getAllBoardsInfo()) || [])[0];
+		if (b && b.pcb && b.schematic) return b;
+		await new Promise(r => setTimeout(r, 1000));
+	}
+	throw new Error('等待工程加载超时：没有找到 Board（工程是否打开？）');
+}
+
 async function openPcb() {
-	const b = (await eda.dmt_Board.getAllBoardsInfo())[0];
+	const b = await firstBoard();
 	await eda.dmt_EditorControl.openDocument(b.pcb.uuid);
 	await sleep(800);
 	return b;

@@ -8,9 +8,8 @@
 需要：~/tools/jre（Java 21）、~/tools/freerouting/fr19.jar，
       以及显示环境（DISPLAY）或 xvfb-run —— Freerouting 1.9 必须有 X。
 """
-
 # ==================== 按项目修改的部分 ====================
-#   GND_LINKS           去耦电容 → 芯片，布线前先把地就近连上
+#   GND_LINKS           去耦电容 → 芯片，布线前先把地就近连上（别连 SOT-23 LDO 中间的 GND 脚，会围死 IN/EN）
 #   POWER_WIDEN         大电流网络 → 目标线宽（有空间才加宽）
 #   HIGH_CURRENT_THT    大电流通孔连接器（GND 脚与铺铜全连接，不用花焊盘）
 #   preroute_usb_c()    Type-C 位号 J1、焊盘 A6/B6/A7/B7；没有 Type-C 就删掉调用
@@ -278,7 +277,7 @@ def widen_power(board, nets=POWER_WIDEN):
 
 
 # 去耦电容的地先就近连到芯片 GND 脚（布线前做，锁定），避免后面被信号线围成孤岛
-GND_LINKS = [("C5", "U1"), ("C6", "U1"), ("C7", "U1"), ("C3", "U3"), ("C4", "U3")]
+GND_LINKS = [("C5", "U1"), ("C6", "U1"), ("C7", "U1")]   # 别给 SOT-23 LDO 的中间 GND 脚预布：会把两侧 IN/EN 脚围死
 
 
 def preroute_gnd_links(board, links=GND_LINKS, width=0.4):
@@ -299,6 +298,48 @@ def preroute_gnd_links(board, links=GND_LINKS, width=0.4):
                 break
         else:
             print(f"去耦地线失败: {cap} → {chip}")
+
+
+def protect_gnd_tracks(board, margin=0.25):
+    """Freerouting 用 -inc GND 跳过 GND 后，也不再把 GND 走线当障碍（会压上去短路）。
+    导出 DSN 前给每段 GND 走线/过孔套一个临时禁布区，布完删除。返回这些禁布区。"""
+    gnd = board.FindNet("GND").GetNetCode()
+    tmp = []
+    for t in list(board.GetTracks()):
+        if t.GetNetCode() != gnd:
+            continue
+        x1, y1 = to_mm(t.GetStart())
+        x2, y2 = to_mm(t.GetEnd())
+        r = (pcbnew.ToMM(t.GetWidth(pcbnew.F_Cu)) if t.GetClass() == "PCB_VIA" else pcbnew.ToMM(t.GetWidth())) / 2 + margin
+        dx, dy = x2 - x1, y2 - y1
+        L = math.hypot(dx, dy) or 1e-9
+        ux, uy = dx / L, dy / L
+        nx, ny = -uy * r, ux * r
+        ex, ey = ux * r, uy * r
+        pts = [(x1 - ex + nx, y1 - ey + ny), (x2 + ex + nx, y2 + ey + ny),
+               (x2 + ex - nx, y2 + ey - ny), (x1 - ex - nx, y1 - ey - ny)]
+        z = pcbnew.ZONE(board)
+        z.SetIsRuleArea(True)
+        z.SetZoneName("tmp_gnd_guard")
+        z.SetDoNotAllowTracks(True)
+        z.SetDoNotAllowVias(True)
+        z.SetDoNotAllowCopperPour(False)
+        z.SetDoNotAllowPads(False)
+        z.SetDoNotAllowFootprints(False)
+        ls = pcbnew.LSET()
+        if t.GetClass() == "PCB_VIA":
+            ls.AddLayer(pcbnew.F_Cu)
+            ls.AddLayer(pcbnew.B_Cu)
+        else:
+            ls.AddLayer(t.GetLayer())
+        z.SetLayerSet(ls)
+        ol = z.Outline()
+        ol.NewOutline()
+        for x, y in pts:
+            ol.Append(v2(x, y))
+        board.Add(z)
+        tmp.append(z)
+    return tmp
 
 
 def add_gnd_zone(board, layer, w, h):
@@ -463,8 +504,11 @@ def main():
     preroute_gnd_links(board)
     if os.environ.get("PREROUTE_VBUS"):
         preroute_vbus(board)
+    guards = protect_gnd_tracks(board)
     if not pcbnew.ExportSpecctraDSN(board, dsn):
         sys.exit("DSN 导出失败")
+    for z in guards:
+        board.Remove(z)
 
     if os.path.exists(ses):
         os.remove(ses)

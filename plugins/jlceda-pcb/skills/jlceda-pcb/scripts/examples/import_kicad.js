@@ -1,13 +1,20 @@
 // 导入路线：KiCad 工程 zip → 嘉立创EDA 新工程 → 立创编号写进供应商字段 → 过孔规则按嘉立创工艺 → 重铺铜 → DRC
 // zip 用 make_kicad_zip.sh 生成（文件在根目录、去掉 3D 模型，base64 后需 < 1MB）
 // 运行：python3 lceda.py run examples/import_kicad.js --in board.zip --args '{"zip":"board.zip","name":"my_board"}' --timeout 900
-const team = (await eda.dmt_Team.getAllTeamsInfo())[0].uuid;
-const r = await eda.sys_FileManager.importProjectByProjectFile(fileIn(ARGS.zip), 'KiCad', undefined,
-	{ operation: 'New Project', newProjectOwnerTeamUuid: team, newProjectName: ARGS.name, newProjectFriendlyName: ARGS.name });
-must(r && r.uuid, '导入失败：zip 里文件要在根目录（不要多套一层文件夹），且包含 .kicad_pro/.kicad_sch/.kicad_pcb');
-await eda.dmt_Project.openProject(r.uuid);
-await sleep(3000);
-await openPcb();
+// 补跑后处理（对当前打开的工程）：python3 lceda.py run examples/import_kicad.js --timeout 600
+// 不传 zip：只对当前打开的工程做后续处理（导入成功但后处理中断时补跑）
+let projectUuid;
+if (ARGS.zip) {
+	const team = (await eda.dmt_Team.getAllTeamsInfo())[0].uuid;
+	const r = await eda.sys_FileManager.importProjectByProjectFile(fileIn(ARGS.zip), 'KiCad', undefined,
+		{ operation: 'New Project', newProjectOwnerTeamUuid: team, newProjectName: ARGS.name, newProjectFriendlyName: ARGS.name });
+	must(r && r.uuid, '导入失败：zip 里文件要在根目录（不要多套一层文件夹），且包含 .kicad_pro/.kicad_sch/.kicad_pcb；同名工程已存在也会失败');
+	projectUuid = r.uuid;
+	await eda.dmt_Project.openProject(projectUuid);
+} else {
+	projectUuid = (await eda.dmt_Project.getCurrentProjectInfo()).uuid;
+}
+await openPcb();          // 内部会等待板子加载
 await sleep(2000);
 
 // KiCad 符号里的 LCSC 字段导入后只是自定义属性，下单要的是“供应商编号”
@@ -26,4 +33,4 @@ const counts = {
 	lines: (await eda.pcb_PrimitiveLine.getAll()).length,
 	vias: (await eda.pcb_PrimitiveVia.getAll()).length,
 };
-return { project: r.uuid, mapped, notInBom: noLcsc, rule, pours, counts, drc: await drcSummary() };
+return { project: projectUuid, mapped, notInBom: noLcsc, rule, pours, counts, drc: await drcSummary() };

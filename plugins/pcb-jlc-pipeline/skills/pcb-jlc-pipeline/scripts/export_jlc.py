@@ -7,7 +7,6 @@
 运行：python3 export_jlc.py
 旋转角度按 KiCad 原样导出，下单后务必在嘉立创贴片预览里逐个核对极性/方向。
 """
-
 # 按项目修改：NAME（工程名，= .kicad_pcb / .kicad_sch 的文件名）
 
 

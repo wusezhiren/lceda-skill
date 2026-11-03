@@ -5,7 +5,6 @@
 运行：kicad-cli sch export netlist -o build/sch.net c3_switch_board.kicad_sch
       python3 build_pcb.py      （用系统 python3，需要 KiCad 自带的 pcbnew 模块）
 """
-
 # ==================== 按项目修改的部分 ====================
 #   W, H                板尺寸（mm）
 #   PLACE               位号 → (x, y, 旋转)；原点为板左上角，x 右 y 下
@@ -28,7 +27,7 @@ NET_FILE = os.path.join(HERE, "build", "sch.net")   # kicad-cli sch export netli
 PCB_FILE = os.path.join(HERE, "c3_switch_board.kicad_pcb")
 KICAD_FP = "/usr/share/kicad/footprints"
 
-W, H = 30.0, 43.0          # 板尺寸
+W, H = 33.5, 43.0          # 板尺寸
 OX, OY = 100.0, 100.0      # 板左上角在 KiCad 坐标系里的位置
 
 # 位号: (x, y, 旋转角度)
@@ -65,6 +64,8 @@ PLACE = {
     "R8": (21.0, 21.15, 90),
     # 右侧中部：通道 2 + 焊盘
     "J3": (27.9, 20.4, -90),
+    # 右边新增一列：电源输出焊线盘 J5（自上而下 3V3 / GND / +5V）
+    "J5": (31.8, 8.4, -90),
     "Q2": (24.5, 21.0, 90),
     "R13": (24.5, 18.3, 0),
     "D4": (24.5, 24.9, 90),
@@ -253,8 +254,13 @@ def tidy_silkscreen(board):
     px, py, _ = PLACE["J4"]
     for k, name in enumerate(["3V3", "GND", "IO0", "IO1", "IO3", "IO4", "IO5", "IO6"]):
         add_text(board, name, px + 1.6, py + 2.54 * k, layer=pcbnew.B_SilkS, h=0.8, justify="right")
-    add_text(board, "ESP32-C3 SWITCH v1.0", W / 2 + 3, H - 1.6, layer=pcbnew.B_SilkS, h=1.0)
-    add_text(board, "J3: CH2 <=0.5A", W - 4, 22.7, layer=pcbnew.B_SilkS, h=0.8, angle=90)
+    add_text(board, "ESP32-C3 SWITCH v1.1", W / 2 + 3, H - 1.6, layer=pcbnew.B_SilkS, h=1.0)
+    add_text(board, "J3: CH2 <=0.5A", 26.0, 22.7, layer=pcbnew.B_SilkS, h=0.8, angle=90)
+    # 电源输出焊盘 J5
+    j5x, j5y, _ = PLACE["J5"]
+    for k, name in enumerate(["3V3", "GND", "5V"]):
+        add_text(board, name, j5x - 1.75, j5y + 4.6 * k, h=0.7, angle=90)
+    add_text(board, "J5: 3V3 <=150mA", j5x - 2.1, j5y + 4.6, layer=pcbnew.B_SilkS, h=0.7, angle=90)
 
 
 def add_rule_area(board, name, pts, layers, tracks, vias, pour):
