@@ -1,6 +1,6 @@
 {
   "name": "pcb-jlc-pipeline",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "description": "KiCad 9 + SKiDL + Freerouting 的 PCB 全流程：原理图、嘉立创选料、摆件、自动布线、DRC 清零、导出嘉立创下单文件",
   "author": { "name": "wusezhiren" },
   "repository": "https://github.com/wusezhiren/lceda-skill",

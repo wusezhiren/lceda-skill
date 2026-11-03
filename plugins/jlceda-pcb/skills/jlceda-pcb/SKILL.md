@@ -9,7 +9,10 @@ description: 用嘉立创EDA专业版（lceda-pro / easyeda-pro 桌面客户端�
 
 - `scripts/lceda.py`：找会话、拼接 `lib.js`、执行脚本、解析 JSON、文件进出（`--in` / `--out`）
 - `scripts/lib.js`：实测可用的公共函数（放器件、连线、导入 PCB 自动确认、板框、摆件、铺铜、DRC 汇总、文件 base64 进出、过孔规则）
+- `scripts/kicad2jlceda.py`：KiCad 工程 → 嘉立创EDA 工程 → 下单文件，一条命令
 - `scripts/examples/`：`native_demo.js`（原生全流程）、`import_kicad.js`（KiCad 导入）、`export.js`（导出生产文件）
+
+**省 token**：优先用现成的一条命令脚本（`kicad2jlceda.py`）和 `lceda.py` 的 `--out` 落盘，只看摘要；JS 里 `return` 精简结果（计数、前几条），不要把整个器件列表/DRC 树返回到对话里。
 
 遇到报错先查 `references/pitfalls.md`；API 细节以客户端自带文档为准：`lceda-pro doc api --class-name <类> --method-name <方法>`。
 
@@ -47,14 +50,20 @@ python3 scripts/lceda.py sessions    # 会话标题不能是 "Regist"
 8. **DRC**：`drcSummary()` 直到 `total: 0`。
 9. **保存**：`eda.pcb_Document.save()`。
 
-## 2B. 导入路线（KiCad → 嘉立创EDA）
+## 2B. 导入路线（KiCad → 嘉立创EDA，一条命令）
 
 ```bash
-bash scripts/make_kicad_zip.sh <KiCad工程目录> /tmp/board.zip     # 文件在根目录、去 3D，base64 < 1MB
-python3 scripts/lceda.py run scripts/examples/import_kicad.js --in /tmp/board.zip \
-    --args '{"zip":"board.zip","name":"my_board"}' --timeout 900
+python3 scripts/kicad2jlceda.py <KiCad工程目录> <新工程名> [输出目录，默认 <工程目录>/jlceda]
 ```
-脚本会：导入 → `LCSC` 字段写成供应商编号（没有编号的件移出 BOM）→ 过孔规则改成嘉立创工艺（0.3mm）→ 重铺铜 → DRC。检查返回的器件/走线/过孔数与 KiCad 一致、`drc.total` 为 0。
+一条命令完成：打包（文件放根目录、去 3D，base64 < 1MB）→ 导入成新工程 → `LCSC` 字段写成供应商编号（没编号的件移出 BOM）→ 过孔规则改成嘉立创工艺 → 重铺铜 → DRC → 导出 `gerber.zip/BOM.csv/CPL.csv`。只打印 3~4 行摘要：
+```
+✔ 打包 191367 字节（base64 约 249 KB，上限 ~1000 KB）
+✔ 导入  器件 38  走线 352  过孔 104  立创编号 32  不进BOM 6  DRC 0
+✔ 导出 gerber.zip(121706B)  BOM.csv(3618B)  CPL.csv(13216B)
+```
+完整返回存在 `<输出目录>/kicad2jlceda.json`，需要时再 grep。**同名工程已存在会导入失败**——KiCad 改版后用新名字（如 `xxx_v1_4`）。导入成功但后处理/导出中断时：`kicad2jlceda.py --fix-current [输出目录]` 只补跑后处理和导出。
+
+KiCad 侧改板后的标准顺序：pcb-jlc-pipeline 的 `python3 pipeline.py` 全绿 → `kicad2jlceda.py`。
 
 ## 3. 导出与下单
 

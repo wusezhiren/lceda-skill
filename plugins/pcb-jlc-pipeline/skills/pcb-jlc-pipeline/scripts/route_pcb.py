@@ -8,16 +8,6 @@
 需要：~/tools/jre（Java 21）、~/tools/freerouting/fr19.jar，
       以及显示环境（DISPLAY）或 xvfb-run —— Freerouting 1.9 必须有 X。
 """
-# ==================== 按项目修改的部分 ====================
-#   GND_LINKS           去耦电容 → 芯片，布线前先把地就近连上（别连 SOT-23 LDO 中间的 GND 脚，会围死 IN/EN）
-#   POWER_WIDEN         大电流网络 → 目标线宽（有空间才加宽）
-#   HIGH_CURRENT_THT    大电流通孔连接器（GND 脚与铺铜全连接，不用花焊盘）
-#   preroute_usb_c()    Type-C 位号 J1、焊盘 A6/B6/A7/B7；没有 Type-C 就删掉调用
-#   preroute_vbus()     仅在 PREROUTE_VBUS=1 时启用（会挡住 D- 交叉，默认关）
-#   stitch_gnd_pads()   跳过 U1 的 49~53 号底部焊盘（ESP32 MINI 模组专用）
-# 其余（DSN/SES、Freerouting、迷宫补线、过孔/铺铜/孤岛）通用。
-# ==========================================================
-
 
 import math
 import os
@@ -25,6 +15,16 @@ import subprocess
 import sys
 
 import pcbnew
+
+# ==================== 按项目修改的部分 ====================
+#   GND_LINKS           去耦电容 → 芯片，布线前先把地就近连上（别连 SOT-23 LDO 中间的 GND 脚，会围死 IN/EN）
+#   POWER_WIDEN         大电流网络 → 目标线宽（有空间才加宽）
+#   HIGH_CURRENT_THT    大电流通孔连接器（GND 脚与铺铜全连接，不用花焊盘）
+#   preroute_usb_c()    Type-C 位号 J1、焊盘 A6/B6/A7/B7（按封装朝向自动换算）；没有 Type-C 就删掉调用
+#   preroute_vbus()     仅在 PREROUTE_VBUS=1 时启用（会挡住 D- 交叉，默认关）
+#   stitch_gnd_pads()   跳过 U1 的 49~53 号底部焊盘（ESP32 MINI 模组专用）
+# 其余（DSN/SES、Freerouting、迷宫补线、过孔/铺铜/孤岛）通用。
+# ==========================================================
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -241,13 +241,16 @@ def preroute_usb_c(board, w=0.2, gap=0.45):
     D+（A6↔B6）在焊盘下方用 U 形线连，D-（B7↔A7）在焊盘上方用 U 形线连，互不交叉。"""
     j1 = board.FindFootprintByReference("J1")
     pad = {p.GetNumber(): p for p in j1.Pads()}
+    # “下方/上方”按封装自身坐标（+y 朝插口），再按封装旋转角换到板坐标，任意朝向都适用
+    a = math.radians(j1.GetOrientationDegrees())
+    ux, uy = math.sin(a), math.cos(a)            # 封装 +y 方向在板上的单位向量
     for (n1, n2, below) in (("A6", "B6", True), ("B7", "A7", False)):
         p1, p2 = pad[n1], pad[n2]
         net = p1.GetNet()
         (x1, y1), (x2, y2) = to_mm(p1.GetPosition()), to_mm(p2.GetPosition())
-        half = pcbnew.ToMM(p1.GetSize().y) / 2
-        yy = y1 + half + gap if below else y1 - half - gap
-        for (ax, ay), (bx, by) in (((x1, y1), (x1, yy)), ((x1, yy), (x2, yy)), ((x2, yy), (x2, y2))):
+        d = (pcbnew.ToMM(p1.GetSize().y) / 2 + gap) * (1 if below else -1)
+        a1, a2 = (x1 + ux * d, y1 + uy * d), (x2 + ux * d, y2 + uy * d)
+        for (ax, ay), (bx, by) in (((x1, y1), a1), (a1, a2), (a2, (x2, y2))):
             add_track(board, net, ax, ay, bx, by, w).SetLocked(True)
 
 
@@ -277,7 +280,7 @@ def widen_power(board, nets=POWER_WIDEN):
 
 
 # 去耦电容的地先就近连到芯片 GND 脚（布线前做，锁定），避免后面被信号线围成孤岛
-GND_LINKS = [("C5", "U1"), ("C6", "U1"), ("C7", "U1")]   # 别给 SOT-23 LDO 的中间 GND 脚预布：会把两侧 IN/EN 脚围死
+GND_LINKS = [("C5", "U1"), ("C6", "U1"), ("C7", "U1"), ("U2", "J1")]   # 别给 SOT-23 LDO 的中间 GND 脚预布：会把两侧 IN/EN 脚围死
 
 
 def preroute_gnd_links(board, links=GND_LINKS, width=0.4):
@@ -434,10 +437,89 @@ def fix_islands(board, zones, rounds=3):
                     added += 1
                 elif route_island(board, ol, gnd):
                     added += 1
+        added += join_clusters(board, zones)      # 碎片里有过孔、但整群与主地不通的情况
         filler.Fill(board.Zones())
         print(f"孤岛补孔 {added} 个")
         if not added:
             break
+
+
+def gnd_clusters(board, zones):
+    """把两层 GND 填充碎片按 过孔/通孔焊盘 连成群，返回 (frags, clusters, main_idx)。
+    frags[i] = (layer, outline)；clusters = [[frag_idx...]...]；main = 面积最大的群。"""
+    gnd = board.FindNet("GND").GetNetCode()
+    frags = []
+    for z in zones:
+        L = z.GetLayer()
+        poly = z.GetFilledPolysList(L)
+        for i in range(poly.OutlineCount()):
+            frags.append((L, poly.Outline(i)))
+    parent = list(range(len(frags)))
+
+    def find(a):
+        while parent[a] != a:
+            parent[a] = parent[parent[a]]
+            a = parent[a]
+        return a
+
+    links = [t.GetPosition() for t in board.GetTracks() if t.GetClass() == "PCB_VIA" and t.GetNetCode() == gnd]
+    links += [p.GetPosition() for fp in board.GetFootprints() for p in fp.Pads()
+              if p.GetNetCode() == gnd and p.GetAttribute() == pcbnew.PAD_ATTRIB_PTH]
+    for pos in links:
+        hit = [k for k, (_, ol) in enumerate(frags) if ol.PointInside(pos)]
+        for k in hit[1:]:
+            parent[find(k)] = find(hit[0])
+    groups = {}
+    for k in range(len(frags)):
+        groups.setdefault(find(k), []).append(k)
+    clusters = list(groups.values())
+    main = max(range(len(clusters)), key=lambda c: sum(frags[k][1].Area() for k in clusters[c]))
+    return frags, clusters, main
+
+
+def join_clusters(board, zones):
+    """把与主地不连通的 GND 群接回主地：先找“本群碎片 ∩ 另一层主地碎片”处补过孔，不行再迷宫连线。"""
+    gnd = board.FindNet("GND")
+    r = VIA_D / 2
+    frags, clusters, main = gnd_clusters(board, zones)
+    if len(clusters) <= 1:
+        return 0
+    obs = Obstacles(board, gnd.GetNetCode())
+    main_frags = [frags[k] for k in clusters[main]]
+    fixed = 0
+    for ci, cl in enumerate(clusters):
+        if ci == main:
+            continue
+        done = False
+        for k in cl:
+            L, ol = frags[k]
+            others = [mol for (ML, mol) in main_frags if ML != L]
+            bb = ol.BBox()
+            x0, y0 = to_mm(bb.GetOrigin())
+            x1, y1 = to_mm(bb.GetEnd())
+            y = y0
+            while y <= y1 and not done:
+                x = x0
+                while x <= x1:
+                    q = v2(x, y)
+                    if (ol.PointInside(q) and any(m.PointInside(q) for m in others)
+                            and obs.circle_free(x, y, r, (pcbnew.F_Cu, pcbnew.B_Cu))):
+                        add_via(board, gnd, x, y)
+                        obs.add_via(x, y, r)
+                        done = True
+                        break
+                    x += 0.1
+                y += 0.1
+            if done:
+                break
+        if not done:
+            for k in cl:
+                if route_island(board, frags[k][1], gnd):
+                    done = True
+                    break
+        fixed += done
+        print(f"GND 孤立群 {ci}（{len(cl)} 块碎片）: {'已接回主地' if done else '未能接回'}")
+    return fixed
 
 
 def route_island(board, ol, gnd):
@@ -550,8 +632,25 @@ def main():
     stitch_grid(board, zones)
     filler.Fill(board.Zones())
     fix_islands(board, zones)
+    dedupe_vias(board)
     board.Save(PCB_FILE)
     print("saved", PCB_FILE)
+
+
+def dedupe_vias(board):
+    """迷宫补线/孤岛修补可能在同一点重复打孔（DRC 报 holes_co_located），保留一个。"""
+    seen, n = set(), 0
+    for t in list(board.GetTracks()):
+        if t.GetClass() != "PCB_VIA":
+            continue
+        k = (t.GetPosition().x, t.GetPosition().y)
+        if k in seen:
+            board.Remove(t)
+            n += 1
+        else:
+            seen.add(k)
+    if n:
+        print(f"删除重复过孔 {n} 个")
 
 
 def count_problems(pcb):

@@ -54,6 +54,8 @@
 - **zip 里的文件必须在根目录**；套一层文件夹时接口静默返回 undefined。
 - 3D 模型（STEP）会让 base64 超过 1MB 上限，打包时去掉（`make_kicad_zip.sh`）。
 - KiCad 符号里的 `LCSC` 字段导入后只是自定义属性，下单要的是**供应商编号**：`modify(id, {supplier: 'LCSC', supplierId})`。没有编号的件（安装孔、焊盘、插件排针）设 `addIntoBom: false`。
+- `kicad2jlceda.py` 每次新建工程；**同名工程已存在时导入静默失败**，改版用新名字（如 `_v1_4`），旧工程在客户端里手动删。
+- 打开工程后板子是延迟加载的，立刻 `getAll` 可能拿不到 Board/PCB → lib.js 的 `firstBoard()` 轮询等待。
 - 导入的板子仍用 **KiCad 的封装**，贴片坐标的旋转角不一定符合嘉立创库的约定——下单预览里要逐个核对方向。原生路线用嘉立创库封装，没有这个问题。
 
 ## 下单

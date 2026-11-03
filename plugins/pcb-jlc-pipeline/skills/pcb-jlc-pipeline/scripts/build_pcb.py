@@ -5,17 +5,6 @@
 运行：kicad-cli sch export netlist -o build/sch.net c3_switch_board.kicad_sch
       python3 build_pcb.py      （用系统 python3，需要 KiCad 自带的 pcbnew 模块）
 """
-# ==================== 按项目修改的部分 ====================
-#   W, H                板尺寸（mm）
-#   PLACE               位号 → (x, y, 旋转)；原点为板左上角，x 右 y 下
-#   tidy_silkscreen()   功能标注文字（RST/BOOT/接口说明/背面排针定义）
-#   main() 里的禁布区   模组本体（顶层禁走线/过孔）、天线整条（两层全禁）、
-#                       Type-C 外壳下禁过孔 —— 引用了 U1 / J1 的坐标
-#   write_project_rules() 里的网络类别：Power/Mid/GND/VBUS 的线宽与匹配的网络名
-#                       （本地网络名带 "/" 前缀，如 "/VOUT1"；电源符号网络不带）
-# 其余（读网表、放封装、关联原理图、板框）通用。
-# ==========================================================
-
 
 import os
 import re
@@ -27,68 +16,83 @@ NET_FILE = os.path.join(HERE, "build", "sch.net")   # kicad-cli sch export netli
 PCB_FILE = os.path.join(HERE, "c3_switch_board.kicad_pcb")
 KICAD_FP = "/usr/share/kicad/footprints"
 
-W, H = 33.5, 43.0          # 板尺寸
+# ==================== 按项目修改的部分 ====================
+#   W, H                板尺寸（mm）
+#   PLACE               位号 → (x, y, 旋转)；原点为板左上角，x 右 y 下
+#   tidy_silkscreen()   功能标注文字（RST/BOOT/接口说明/背面排针定义）
+#   main() 里的禁布区   模组本体（顶层禁走线/过孔）、天线带（模组宽度两侧各 +3mm，两层全禁）、
+#                       Type-C 外壳下禁过孔 —— 引用了 U1 / J1 的坐标
+#   write_project_rules() 里的网络类别：Power/Mid/GND/VBUS 的线宽与匹配的网络名
+#                       （本地网络名带 "/" 前缀，如 "/VOUT1"；电源符号网络不带）
+#   EXTRA               板上附加件（焊盘/测试点），只改 PCB 不动原理图
+# 其余（读网表、放封装、关联原理图、板框）通用。
+# ==========================================================
+
+W, H = 55.4, 22.0          # 板尺寸：长条形，两端各一个口
 OX, OY = 100.0, 100.0      # 板左上角在 KiCad 坐标系里的位置
 
 # 位号: (x, y, 旋转角度)
-# 信号流：Type-C(右下) → F1 → +5V 主干横穿中部 → LDO / Q3 → USB-A(左下)
-#         USB D+/D- 沿右侧通道上到模组 26/27 脚；通道 2 和 J3 在右侧中部
+# 长条布局：Type-C 在右端（插口朝右）、USB-A 在左端（插口朝左），模组居中、天线朝上贴长边。
+# 信号流：J1 → F1 → +5V 从右往左（底层穿过模组下方）→ LDO（模组左侧）/ Q3 → USB-A。
+#         USB D+/D-、UART 都在模组右侧，直接接右边的 Type-C 区。
 PLACE = {
     # 模组：天线朝上贴板边
-    "U1": (15.0, 8.54, 0),
-    # 安装孔
-    "H1": (2.7, 2.7, 0),
-    "H2": (27.0, 3.0, 0),
-    # 扩展排针，沿左边
-    "J4": (2.6, 7.1, 0),
-    # 模组左侧：3V3 去耦、GPIO2 上拉、EN 阻容
-    "C5": (6.3, 7.4, 90),
-    "C6": (6.3, 10.0, 90),
-    "R6": (6.3, 12.0, 90),
-    "R4": (6.3, 14.0, 90),
-    "C7": (6.3, 16.0, 90),
-    # 底边：USB-A（左）+ Type-C（右），开口朝下
-    "J2": (5.6, 30.0, 0),
-    "J1": (24.3, 39.1, 0),
-    # 右上：UART 测试点、RST / BOOT
-    "TP1": (23.3, 8.0, 0),
-    "TP2": (23.3, 10.4, 0),
-    "SW1": (27.8, 8.6, 90),
-    "SW2": (27.8, 14.9, 90),
-    # 模组下方：GPIO7/8/9 相关电阻
-    "R12": (17.2, 18.4, -90),
-    "R7": (18.4, 18.4, 90),
-    "R5": (24.5, 17.1, 0),        # GPIO9 上拉，挨着 BOOT 键
-    # 状态灯紧挨 GPIO8，不跨 USB 数据线通道
-    "D2": (21.0, 18.6, -90),      # 阴极朝上接 GPIO8，阳极朝下接 R8
-    "R8": (21.0, 21.15, 90),
-    # 右侧中部：通道 2 + 焊盘
-    "J3": (27.9, 20.4, -90),
-    # 右边新增一列：电源输出焊线盘 J5（自上而下 3V3 / GND / +5V）
-    "J5": (31.8, 8.4, -90),
-    "Q2": (24.5, 21.0, 90),
-    "R13": (24.5, 18.3, 0),
-    "D4": (24.5, 24.9, 90),
-    "C9": (24.5, 27.4, 0),
-    # 右下：F1 在左侧 VBUS 过孔正上方，U2 居中，CC1 从 F1/U2 之间上到 R1，R2 在右，外壳阻容在左
-    "F1": (21.85, 31.0, 90),
-    "U2": (25.0, 30.8, 90),
-    "R1": (23.1, 27.6, 90),
-    "R2": (28.4, 31.2, 90),
-    "C1": (19.4, 30.4, 90),
-    "R3": (19.4, 32.6, 90),
-    # 中部偏左：LDO（与模组底边留 ≥1.5mm 通道，给 GPIO0/1/3 往左去排针）
-    "U3": (6.8, 20.4, 0),
-    "C3": (10.6, 19.8, 90),
-    "C4": (12.2, 19.8, 90),
-    # 左下：通道 1 高边开关（Q3 漏极朝下对着 USB-A 的 VBUS）
-    "Q3": (6.4, 26.0, -90),
-    "R17": (9.2, 23.6, 0),
-    "C2": (10.5, 26.4, 0),
-    "Q1": (15.0, 26.2, 0),
-    "R10": (13.6, 21.4, 90),
-    "R11": (15.0, 21.4, 90),
+    "U1": (28.8, 8.54, 0),
+    # 安装孔：天线两侧（无铜 NPTH，建议尼龙螺丝）
+    "H1": (17.2, 2.6, 0),
+    "H2": (40.4, 2.6, 0),
+    # 左端：USB-A（插口朝左），上方一条放高边开关
+    "J2": (13.0, 9.5, -90),
+    "Q3": (12.6, 2.05, -90),     # 漏极朝下对着 USB-A 的 VBUS 脚
+    "R17": (10.0, 2.05, 90),
+    "Q1": (7.2, 2.05, 0),        # 漏极朝右接 Q3 栅极
+    "R10": (4.2, 1.2, 0),
+    "R11": (4.2, 2.9, 0),
+    # USB-A 与模组之间：LDO + 大电容
+    "U3": (16.9, 8.0, 0),        # OUT 脚在右上，挨着 C5
+    "C3": (16.9, 11.0, 0),
+    "C4": (16.9, 12.8, 0),
+    "C2": (16.2, 16.3, 90),
+    # 模组左侧一列：3V3 去耦、GPIO2 上拉、EN 阻容
+    "C5": (20.1, 7.4, 90),
+    "C6": (20.1, 10.0, 90),
+    "R6": (20.1, 12.0, 90),
+    "R4": (20.1, 14.0, 90),
+    "C7": (20.1, 16.0, 90),
+    # 模组下方：扩展排针横放（3V3 GND IO0 IO1 IO3 IO4 IO5 IO6，从左到右）
+    "J4": (19.4, 20.1, 90),
+    # 模组右侧一列：UART 测试点、GPIO8 灯、GPIO9 上拉
+    "TP1": (37.4, 7.0, 0),
+    "TP2": (37.4, 9.3, 0),
+    "R7": (37.3, 11.3, 0),
+    "D2": (37.3, 13.0, 0),
+    "R8": (37.3, 14.7, 0),
+    "R5": (37.3, 16.2, 0),
+    # 右上：BOOT / RST 按键（天线禁布带右侧）
+    "SW2": (46.0, 2.5, 0),
+    "SW1": (52.1, 2.5, 0),
+    # Type-C 内侧一列：RGB、ESD、CC 电阻、保险丝
+    "D5": (41.2, 6.6, 0),
+    "R18": (44.4, 5.9, 90),
+    "C11": (44.4, 8.1, 90),
+    "U2": (41.3, 11.2, 90),
+    "R2": (44.4, 10.2, 90),
+    "R1": (44.4, 12.4, 90),
+    "F1": (42.3, 15.6, 0),
+    # 右端：Type-C（插口朝右），下方外壳阻容
+    "J1": (51.4, 11.0, 90),
+    "C1": (48.2, 17.45, 0),
+    "R3": (50.6, 17.45, 0),
+    # 右下：电源输出焊线盘 J5（从左到右 3V3 / GND / +5V）
+    "J5": (42.4, 20.2, 0),
 }
+
+# 板上附加件（不进原理图）：焊盘、测试点、安装孔等。只改 PCB，原理图不用动：
+#   改完运行 pipeline.py --from build。标记为“仅板上”(Not in schematic)，一致性检查跳过，不进 BOM/坐标。
+#   nets: 焊盘号 → 已有网络名（本地网络带 "/" 前缀，如 "/OUT2"；电源网络 "+5V"、"GND" 不带）
+# 例：EXTRA = [{"ref": "TP10", "footprint": "TestPoint:TestPoint_Pad_D1.5mm", "at": (5, 30, 0),
+#               "nets": {"1": "+5V"}, "label": "5V"}]
+EXTRA = []
 
 
 def mm(x, y):
@@ -171,6 +175,28 @@ def main():
             n = pad_net.get((ref, pad.GetNumber()))
             if n:
                 pad.SetNet(netinfo[n])
+    # 板上附加件（不在原理图里）
+    for e in EXTRA:
+        lib, name = e["footprint"].split(":")
+        fp = pcbnew.FootprintLoad(fp_lib_path(lib), name)
+        fp.SetFPID(pcbnew.LIB_ID(lib, name))
+        fp.SetReference(e["ref"])
+        fp.SetValue(e.get("value", e.get("label", e["ref"])))
+        fp.SetAttributes(fp.GetAttributes() | pcbnew.FP_BOARD_ONLY | pcbnew.FP_EXCLUDE_FROM_BOM
+                         | pcbnew.FP_EXCLUDE_FROM_POS_FILES)
+        board.Add(fp)
+        x, y, rot = e["at"]
+        fp.SetPosition(mm(x, y))
+        fp.SetOrientationDegrees(rot)
+        for pad in fp.Pads():
+            n = e.get("nets", {}).get(pad.GetNumber())
+            if n:
+                if n not in netinfo:
+                    raise SystemExit(f"EXTRA {e['ref']}: 网络 {n} 不存在（可用: {', '.join(sorted(netinfo)[:20])}...）")
+                pad.SetNet(netinfo[n])
+        if e.get("label"):
+            add_text(board, e["label"], x, y - 1.8, h=0.7)
+
     if missing:
         print("未放置:", missing)
 
@@ -204,13 +230,14 @@ def main():
         ol.Append(mm(ux + dx, uy + dy))
     board.Add(ko)
 
-    # 天线区：板顶整条两层禁走线/过孔/铺铜（模组封装自带的禁布区只覆盖模组宽度）
-    add_rule_area(board, "antenna_keepout", [(0, 0), (W, 0), (W, 5.7), (0, 5.7)],
+    # 天线区：模组上沿一条两层禁走线/过孔/铺铜，比模组两侧各宽 3mm（封装自带的禁布区只覆盖模组宽度）
+    ax0, ax1 = ux - 6.84 - 3.0, ux + 6.84 + 3.0     # 模组宽度两侧各多 3mm
+    add_rule_area(board, "antenna_keepout", [(ax0, 0), (ax1, 0), (ax1, 5.7), (ax0, 5.7)],
                   layers=(pcbnew.F_Cu, pcbnew.B_Cu), tracks=True, vias=True, pour=True)
     # Type-C 外壳下方禁过孔（外壳接 SHIELD，不是 GND）
     jx, jy, _ = PLACE["J1"]
-    add_rule_area(board, "usbc_shell_novia", [(jx - 4.5, jy - 3.0), (jx + 4.5, jy - 3.0),
-                                              (jx + 4.5, H), (jx - 4.5, H)],
+    add_rule_area(board, "usbc_shell_novia", [(jx - 3.0, jy - 4.5), (W, jy - 4.5),
+                                              (W, jy + 4.5), (jx - 3.0, jy + 4.5)],
                   layers=(pcbnew.F_Cu, pcbnew.B_Cu), tracks=False, vias=True, pour=False)
 
     board.Save(PCB_FILE)
@@ -241,26 +268,20 @@ def tidy_silkscreen(board):
     for fp in board.GetFootprints():
         fp.Reference().SetVisible(False)
         # 连接器伸出板边的丝印不删（删了会与库不一致），嘉立创出图时会自动裁掉
-    # 顶面：按键、通道 2 焊盘极性、USB-A 输出
-    sx = PLACE["SW1"][0] - 2.6
-    add_text(board, "RST", sx, PLACE["SW1"][1], h=0.7, angle=90)
-    add_text(board, "BOOT", sx, PLACE["SW2"][1], h=0.7, angle=90)
-    jx, jy, _ = PLACE["J3"]
-    add_text(board, "5V+", jx, jy - 1.6, h=0.7)
-    add_text(board, "OUT-", jx, jy + 4.6 + 1.6, h=0.7)
-    ux, uy, _ = PLACE["J2"]
-    add_text(board, "CH1 USB 5V/2A", ux + 3.5, uy - 2.25, h=0.7)
-    # 背面：排针功能、板名
-    px, py, _ = PLACE["J4"]
-    for k, name in enumerate(["3V3", "GND", "IO0", "IO1", "IO3", "IO4", "IO5", "IO6"]):
-        add_text(board, name, px + 1.6, py + 2.54 * k, layer=pcbnew.B_SilkS, h=0.8, justify="right")
-    add_text(board, "ESP32-C3 SWITCH v1.1", W / 2 + 3, H - 1.6, layer=pcbnew.B_SilkS, h=1.0)
-    add_text(board, "J3: CH2 <=0.5A", 26.0, 22.7, layer=pcbnew.B_SilkS, h=0.8, angle=90)
-    # 电源输出焊盘 J5
+    # 顶面：按键（标在按键下方）、RGB、电源输出焊盘
+    for ref, name in (("SW1", "RST"), ("SW2", "BOOT")):
+        add_text(board, name, PLACE[ref][0], PLACE[ref][1] + 2.25, h=0.6)
+    add_text(board, "RGB", PLACE["D5"][0], PLACE["D5"][1] + 1.75, h=0.6)
     j5x, j5y, _ = PLACE["J5"]
     for k, name in enumerate(["3V3", "GND", "5V"]):
-        add_text(board, name, j5x - 1.75, j5y + 4.6 * k, h=0.7, angle=90)
-    add_text(board, "J5: 3V3 <=150mA", j5x - 2.1, j5y + 4.6, layer=pcbnew.B_SilkS, h=0.7, angle=90)
+        add_text(board, name, j5x + 4.6 * k + 1.85, j5y, h=0.7, angle=90)
+    # 背面：排针功能、输出说明、板名
+    px, py, _ = PLACE["J4"]
+    for k, name in enumerate(["3V3", "GND", "IO0", "IO1", "IO3", "IO4", "IO5", "IO6"]):
+        add_text(board, name, px + 2.54 * k, py - 2.2, layer=pcbnew.B_SilkS, h=0.7, angle=90)
+    add_text(board, "USB OUT 5V/2A", 6.5, 13.0, layer=pcbnew.B_SilkS, h=0.8)
+    add_text(board, "J5 3V3 <=150mA", j5x + 4.6, j5y - 2.3, layer=pcbnew.B_SilkS, h=0.6)
+    add_text(board, "ESP32-C3 SWITCH v1.4", PLACE["U1"][0], 11.0, layer=pcbnew.B_SilkS, h=1.0)
 
 
 def add_rule_area(board, name, pts, layers, tracks, vias, pour):

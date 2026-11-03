@@ -57,11 +57,21 @@ cp -r lceda-skill/plugins/pcb-jlc-pipeline/skills/pcb-jlc-pipeline ~/.claude/ski
 - “把这个 KiCad 工程导入嘉立创EDA，检查 DRC 后准备下单”
 - “帮我设计一块 PCB，要能在嘉立创贴片”（会走 KiCad 全流程）
 
+- “板子上再加三个电源输出焊盘”（只改 PCB，不动原理图）
+- “加一颗 RGB 灯，删掉第二路开关，板子改成长条形”
+
+常用命令（Claude 会自己跑，也可以手动）：
+
+```bash
+python3 pipeline.py [--from sch|build|route|check|export]     # KiCad 项目目录里：原理图 → 摆件 → 布线 → DRC → 导出，一行一个结果
+python3 kicad2jlceda.py <KiCad工程目录> <新工程名>              # KiCad 工程 → 嘉立创EDA 工程 → 下单文件
+```
+
 **下单（上传设计到嘉立创）之前 Claude 会先征求你的同意**；付款、拼板、工艺选项在嘉立创下单页由你完成。
 
 ## 已验证
 
 - 嘉立创EDA专业版 Linux x64 4.1.93：原生路线（按立创编号放器件 → 网络连线 → 导入 PCB → 摆件 → 自动布线 → 铺铜 → DRC 0 错 → 导出）和 KiCad 9 工程导入（40 器件 / 277 走线 / 94 过孔，DRC 0 错）均实测通过。
-- KiCad 9.0.9：ESP32-C3 双路开关板（30×43mm，双层）从原理图到 DRC 0 违规、导出嘉立创 Gerber/BOM/CPL。
+- KiCad 9.0.9：ESP32-C3 开关板（55×22mm 长条，双层，USB-A 2A 高边开关 + WS2812 RGB + 电源焊线盘）从原理图到 DRC 0 违规、导出嘉立创 Gerber/BOM/CPL，并导入嘉立创EDA（DRC 0）。
 
 各 skill 的 `references/pitfalls.md` 记录了实测踩过的坑。
