@@ -9,8 +9,11 @@ async function sysLib() {
 
 // 按立创 C 编号取系统库器件（getByLcscIds 在 4.1.93 返回空，用 searchByProperties）
 async function deviceByLcsc(lcsc) {
-	const r = await eda.lib_Device.searchByProperties({ supplierId: lcsc }, undefined, undefined, undefined, 5, 1);
-	const d = (r || []).find(x => (x.otherProperty || {})['Supplier Part'] === lcsc) || (r || [])[0];
+	const r = await eda.lib_Device.searchByProperties({ supplierId: lcsc }, undefined, undefined, undefined, 10, 1);
+	// 同一编号可能有多条系统库记录（如 C15127 的 AO3401A_P 缺 Manufacturer Part，会触发原理图 DRC ATTRMATCHCODE）：
+	// 优先取型号属性完整的记录
+	const same = (r || []).filter(x => (x.otherProperty || {})['Supplier Part'] === lcsc);
+	const d = same.find(x => (x.otherProperty || {})['Manufacturer Part']) || same[0] || (r || [])[0];
 	if (!d) throw new Error(`系统库里找不到 ${lcsc}`);
 	return { ...d, libraryUuid: d.libraryUuid || await sysLib() };
 }
@@ -44,11 +47,34 @@ async function schPlace(lcsc, designator, x, y, rotation = 0) {
 }
 
 // 在引脚端点沿引脚朝向画一段带网络名的短线（同名网络自动连通）
-async function schNet(pin, net, len = 20) {
+async function schNet(pin, net, len = 20, label = true) {
 	const [dx, dy] = DIR[pin.rot] || [1, 0];
 	const w = await eda.sch_PrimitiveWire.create([pin.x, pin.y, pin.x + dx * len, pin.y + dy * len], net);
 	must(w, `连线 ${net} 失败`);
+	const attributes = await eda.sch_PrimitiveAttribute.getAll(w.getState_PrimitiveId());
+	const netLabel = attributes.find(attribute => ['Name', 'NET'].includes(attribute.getState_Key()));
+	if (netLabel) {
+		await eda.sch_PrimitiveAttribute.modify(netLabel.getState_PrimitiveId(), {
+			x: pin.x + dx * len,
+			y: pin.y + dy * len + (dy === 0 ? 2 : 0),
+			rotation: dy === 0 ? 0 : 90,
+			fontSize: 6,
+			alignMode: dx < 0 || dy < 0 ? 9 : 3,
+			keyVisible: false,
+			valueVisible: label,
+		});
+	}
 	return w;
+}
+
+async function clearSchematic() {
+	for (const component of await eda.sch_PrimitiveComponent.getAll()) {
+		if (String(component.getState_ComponentType()).toLowerCase() !== 'sheet') {
+			await eda.sch_PrimitiveComponent.delete([component.getState_PrimitiveId()]);
+		}
+	}
+	const wires = (await eda.sch_PrimitiveWire.getAll()).map(wire => wire.getState_PrimitiveId());
+	if (wires.length) await eda.sch_PrimitiveWire.delete(wires);
 }
 
 // 引脚号或引脚名找引脚
@@ -115,6 +141,33 @@ async function openPcb() {
 	return b;
 }
 
+async function openSchematic(timeoutMs = 30000) {
+	const board = await firstBoard();
+	const schematic = await eda.dmt_Schematic.getSchematicInfo(board.schematic.uuid);
+	must(schematic?.page?.length, '工程没有原理图页');
+	await eda.dmt_EditorControl.openDocument(schematic.page[0].uuid);
+	const started = Date.now();
+	while (Date.now() - started < timeoutMs) {
+		try {
+			await eda.sch_PrimitiveComponent.getAll('part');
+			await sleep(1500);
+			return board;
+		} catch (error) {
+			await sleep(800);
+		}
+	}
+	throw new Error('原理图页打开超时');
+}
+
+async function freePads() {
+	const owned = new Set();
+	for (const component of await eda.pcb_PrimitiveComponent.getAll()) {
+		const pins = await eda.pcb_PrimitiveComponent.getAllPinsByPrimitiveId(component.getState_PrimitiveId());
+		for (const pin of pins) owned.add(pin.getState_PrimitiveId());
+	}
+	return (await eda.pcb_PrimitivePad.getAll()).filter(pad => !owned.has(pad.getState_PrimitiveId()));
+}
+
 // 矩形板框（单位 mm，左下角 (x0,y0)；PCB 的 Y 轴向上）
 async function boardOutline(wMm, hMm, x0 = 0, y0 = 0) {
 	for (const l of await eda.pcb_PrimitivePolyline.getAll(undefined, EPCB_LayerId.BOARD_OUTLINE))
@@ -138,13 +191,31 @@ async function pcbPlace(place) {
 	return { placed: comps.length - miss.length, unplaced: miss };
 }
 
+// 模块化摆件：每个模块用局部坐标（以模块锚点为原点，按官方参考布局排好），整体平移+旋转后落到板上
+// modules = { MCU: { at:[x,y], rot:0, parts:{ U1:[0,0,270], C15:[1.75,3.5,90], ... } }, POWER: {...} }
+// 旋转按逆时针度数作用于局部坐标和器件自身角度；返回展开后的平面摆件表，便于 dump/check 复核
+function expandModules(modules) {
+	const flat = {};
+	for (const [name, m] of Object.entries(modules)) {
+		const [ox, oy] = m.at, r = (m.rot || 0) * Math.PI / 180, c = Math.cos(r), s = Math.sin(r);
+		for (const [ref, [dx, dy, rot = 0, side = m.side || 'TOP']] of Object.entries(m.parts)) {
+			must(!flat[ref], `${ref} 同时出现在多个模块里（${name}）`);
+			flat[ref] = [+(ox + c * dx - s * dy).toFixed(3), +(oy + s * dx + c * dy).toFixed(3), ((rot + (m.rot || 0)) % 360 + 360) % 360, side];
+		}
+	}
+	return flat;
+}
+async function pcbPlaceModules(modules, extra = {}) {
+	return pcbPlace({ ...expandModules(modules), ...extra });
+}
+
 // 两面整板铺 GND（矩形，单位 mm）
-async function pourGnd(wMm, hMm, x0 = 0, y0 = 0, net = 'GND') {
+async function pourGnd(wMm, hMm, x0 = 0, y0 = 0, net = 'GND', preserveSilos = false) {
 	const pts = [mm(x0), mm(y0), 'L', mm(x0 + wMm), mm(y0), mm(x0 + wMm), mm(y0 + hMm), mm(x0), mm(y0 + hMm), mm(x0), mm(y0)];
 	const res = [];
 	for (const layer of [EPCB_LayerId.TOP, EPCB_LayerId.BOTTOM]) {
 		const cp = eda.pcb_MathPolygon.createComplexPolygon([pts]);
-		res.push(await eda.pcb_PrimitivePour.create(net, layer, cp, EPCB_PrimitivePourFillMethod.SOLID, true, `${net}_${layer}`));
+		res.push(await eda.pcb_PrimitivePour.create(net, layer, cp, EPCB_PrimitivePourFillMethod.SOLID, preserveSilos, `${net}_${layer}`));
 	}
 	return res.map(r => !!r);
 }
@@ -175,7 +246,7 @@ function fileIn(name) {
 }
 
 // DRC 结果是多层嵌套分组；摊平成 {“类型 / 对象”: {count, at:[[xmm,ymm]...], objs}} 方便阅读
-async function drcSummary(maxAt = 4) {
+async function drcSummary(maxAt = 4, includeLeaves = false) {
 	const v = await drc();
 	const leaves = [];
 	(function walk(n) {
@@ -191,11 +262,11 @@ async function drcSummary(maxAt = 4) {
 		const s = sum[k] = sum[k] || { count: 0, at: [], objs: [] };
 		s.count++;
 		if (s.at.length < maxAt) {
-			s.at.push([+(e.pos.x / MM).toFixed(2), +(e.pos.y / MM).toFixed(2)]);
+			s.at.push([+(e.pos.x * 10 / MM).toFixed(2), +(e.pos.y * 10 / MM).toFixed(2)]);
 			s.objs.push(`${e.obj1?.typeName}${e.obj1?.suffix || ''} ↔ ${e.obj2?.typeName}${e.obj2?.suffix || ''}`);
 		}
 	}
-	return { total: leaves.length, groups: sum };
+	return includeLeaves ? { total: leaves.length, groups: sum, leaves } : { total: leaves.length, groups: sum };
 }
 
 // 按嘉立创 2 层板工艺放宽过孔规则：孔径 ≥0.3mm、外径 ≥0.5mm（导入工程的默认规则要求孔径 ≥0.5mm）

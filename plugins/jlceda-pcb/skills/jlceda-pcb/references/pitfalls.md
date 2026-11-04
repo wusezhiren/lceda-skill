@@ -23,6 +23,20 @@
 - 原理图坐标单位 10mil，**Y 轴向上**。引脚 `rotation`：0 朝右、90 朝上、180 朝左、270 朝下；`x,y` 是引脚外端点。
 - **连线用“带网络名的短线”**：`sch_PrimitiveWire.create([x1,y1,x2,y2], 'NET')`，同名自动连通（等同网络标签），程序生成最省事。
 
+- **两脚器件的符号引脚长度不统一**：大多数电阻电容引脚端点在 ±20（10mil 单位），但 C1555（22pF）等符号是 ±15，轻触开关 TS-1088 是 ±30。按固定偏移连线会得到斜线，`sch_PrimitiveWire.create` 直接抛 `create failed!`（不返回 undefined）。放置后读取实际引脚坐标连线；`sch_style.js` 的 `place()` 会把两脚器件的 1 脚平移到 ±20 设计位置。
+- **电源/地符号要在导线之后创建**：先放 `createNetFlag` 再画到符号引脚上的导线，导线可能不并入该网络；`sch_style.js` 把符号延后到 `flushLabels()` 里统一创建。
+- **同一连通线组多处带网络名会报 DRC 警告 ONENETNAME**（“GND、GND”）：内部导线不命名，只给标签短线或一段导线命名。
+- **同一立创编号可能有多条系统库记录**：C15127 有 `AO3401A_P`（Manufacturer Part 为空，DRC 报 ATTRMATCHCODE）和 `AO3401A_C15127`；`deviceByLcsc()` 已改为优先取型号属性完整的记录。
+- **网络端口默认不显示名称**：`createNetPort` 的 Name 属性 `valueVisible=false`，需要可见时改属性。导线带网络名时默认显示标签，内部导线要显式隐藏。
+- **刚改完某页立即导出网表可能缺该页器件**：保存后等几秒再 `sch_Netlist.getNetlist()`，并核对器件总数。
+- **原理图 DRC**：`sch_Drc.check(true, false, true)` 返回 `[{type, rule, primitives}]`。有意悬空的引脚（CHECKFLOATPIN）、只在 PCB 落焊盘的单节点网络（SHOWDANDLING）属于预期警告，需逐条说明；NETOBJECTONGRID 表示标签端点不在 5 单位网格。
+
+## 工程
+
+- `createProject(name, undefined, teamUuid)` 在离线模式下的工程根目录（`dmt_Team.getAllTeamsInfo()` 返回的本地路径）新建 `<name>/` 文件夹；**同名文件夹已存在（哪怕只放了需求文档）时静默失败返回 undefined**。先把文档临时移出、删空目录、建工程，再把文档放回。
+- 没有删除工程的 API；要“删掉旧工程重画”，备份后删图页或由用户在客户端/文件夹里删除。
+- 客户端关闭后 `lceda.py sessions` 为空：`DISPLAY=:0 XAUTHORITY=<Xwayland auth> ~/tools/lceda-pro/lceda-pro open` 打开空编辑器，再 `openProject`。
+
 ## 原理图 → PCB
 
 - `pcb_Document.importChanges()` **会弹“确认导入信息”对话框**，返回 true 但 PCB 还是空的，直到有人点“应用修改”。
@@ -61,3 +75,22 @@
 ## 下单
 
 - `pcb_ManufactureData.placePcbOrder(interactive, ignoreWarning)` / `placeSmtComponentsOrder(...)`：交互模式弹窗等用户确认；非交互模式检查通过后**在新标签页打开下单页**。会把设计数据上传到嘉立创——**调用前必须征得用户同意**；付款仍由用户在下单页完成。
+
+## PCB 布局（2026-11-04 实测）
+- `getPrimitivesBBox` 返回的器件框包含丝印/外形层，比焊盘包络大得多；判断摆件冲突用焊盘（`pcb_check.py`），否则不是误报就是漏报。
+- 位号默认位置与字号不管密度，0201 板上会大面积重叠；布局完成后必须跑 `pcb_silk.js` 再 `pcb_check.py --silk`。
+- `lib_Footprint.updateDocumentSource()`、`lib_Footprint.openInEditor()` 在 4.1.93 对工程库调用直接抛 `Error: [object Object]`（原样回写也失败）；`lib_Footprint.create('project', …)` 能建空封装、`search(name,'project')` 能查到，`getDocumentSource(uuid,'project')` 可读（真实 libraryUuid 读回空串）。
+- 原理图 `createShortCircuitFlag` 会把两侧网络整体合并，不是 net-tie。
+- 内置 `autoRouting()` 小板 4 层也可能 >10 分钟，CLI 调用超时后客户端继续跑，结束时走线被回滚；`startAutoRouting()` 可用 `getAutoJobStatus/cancelAutoJob` 观察和取消。主布线用 Freerouting。
+- 换成小封装器件后原理图符号引脚间距/位置会变（SOT-666 ESD 脚距 10、SOT-523 MOS 的 S/D 在正上下），原有连线 `create failed!`；先读新符号引脚再改。
+- Freerouting：不要从 DSN 里删 GND 网络来“跳过”它 —— GND 焊盘会变成无网络，所有地孔/地线都成预存违规（实测 333 处）并堵住通道；用 `-inc GND`（类名即网络名）忽略布线。`freeroute.py` 已这样做。
+- 立创导出的 DSN 有时不包含规则区（天线禁布区），布线器会穿过天线区；`freeroute.py` 按规则区外框注入 `(keepout (rect signal …))`。DSN 坐标与 PCB 坐标同为 mil、同原点。
+- 预布线的线段只是“穿过”焊盘中心时，Freerouting 判为未连接并报 unrouted；在焊盘中心断开成多段（项目 plan 脚本里做后处理）。
+- `pcb_PrimitivePad.create` 矩形焊盘：枚举是 `EPCB_PrimitivePadShapeType.RECTANGLE`（不是 RECT，写错就是 undefined），形状数组 `[RECTANGLE, 宽, 高, 圆角]` 四项；错误信息只有“无法创建焊盘图元”。
+- Freerouting `-inc` 忽略的网络（如 GND）仍会把“同网络过孔碰焊盘”计入 pre-existing violations（实测 229 条全是 GND↔GND），不是真问题；已被固定铜皮完全连通的网络（如由多块 Fill 拼成的天线 ANT_FEED）也要加进 `--skip-nets`，否则每块铜皮算一条 unrouted，且只要有 unrouted 就跳过优化阶段。
+- `importAutoRouteSesFile` 会把 DSN 里已有的固定导线/过孔再创建一份（同坐标重复，DRC 报 Hole to Hole），`freeroute.py` 导回后按坐标去重。
+- 封装里的非金属化定位孔（例如全贴片 USB-C 的塑料定位柱孔，在封装源码里是 layerId 12 的圆形 FILL，DRC 叫 Slot Region）不会进 DSN，布线器会穿过去；用 `freeroute.py --keepout x1,y1,x2,y2` 补禁布区，铜皮也要让开。
+- 让 Freerouting 不在某层布线：DSN 里把该层 `(type signal)` 改 `power` 还不够（日志 “declared as a power layer but no plane is defined … treated as a signal layer”），必须再加 `(plane GND (polygon Inner1 0 <板框坐标>))`。`freeroute.py --plane-layers Inner1` 默认这样处理 L2。
+- 立创导出的 DSN 里每个网络 class 的 `(clearance 4.02)` 比全局 `(rule (clear 6.03))` 小，Freerouting 按 class 值布线，导回后立创 DRC 按 6mil 报大量 Track to Via / Pad to Track；`freeroute.py` 默认把 class 间距统一成全局值。
+- Freerouting 2.5.0 整板布线会把部分已布通网络整条漏写进 SES（UART_RX 单独布正常，整板时 SES 里没有、日志也不报未布通），表现为导回后芯片引脚大量 Connection Error。改用 1.9（`freeroute.py` 默认 `--engine 19`，需要 DISPLAY）。检查办法：拿 DSN 的引脚坐标逐个比对 SES 走线端点。
+- 0.4mm 间距 QFN（焊盘 0.28mm，焊盘与走线间距规则 0.152mm）进脚线宽上限约 0.216mm；DSN 默认 10mil 线宽会让芯片引脚一根都进不去，`freeroute.py` 默认信号线 6mil。

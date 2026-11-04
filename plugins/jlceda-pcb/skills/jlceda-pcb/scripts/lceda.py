@@ -5,6 +5,7 @@
   python3 lceda.py doctor                       # 检查客户端/桥接是否就绪
   python3 lceda.py sessions                     # 列出编辑器会话
   python3 lceda.py run step.js [--args '{"k":1}'] [--timeout 300] [--session ID]
+  python3 lceda.py run step.js --args-file input.json  # 大参数或含空格路径
   python3 lceda.py exec 'return await eda.dmt_Project.getCurrentProjectInfo()'
   python3 lceda.py run export.js --out jlcpcb/          # 返回值里的 fileOut(...) 写到 jlcpcb/
   python3 lceda.py run import.js --in project.zip       # 脚本里 fileIn("project.zip") 取回 File
@@ -117,7 +118,7 @@ def main(argv):
         print(__doc__)
         return 0
     cmd, rest = argv[0], argv[1:]
-    opts = {"--args": None, "--timeout": "120", "--session": None, "--out": "."}
+    opts = {"--args": None, "--args-file": None, "--timeout": "120", "--session": None, "--out": "."}
     infiles = []
     pos = []
     i = 0
@@ -137,7 +138,12 @@ def main(argv):
         r = call(["session", "list"], 30)
     elif cmd in ("run", "exec"):
         code = "\n".join(open(f, encoding="utf-8").read() for f in pos) if cmd == "run" else pos[0]
+        if opts["--args"] and opts["--args-file"]:
+            sys.exit("--args 和 --args-file 不能同时使用")
         args = json.loads(opts["--args"]) if opts["--args"] else None
+        if opts["--args-file"]:
+            with open(opts["--args-file"], encoding="utf-8") as source:
+                args = json.load(source)
         r = run_code(code, args, int(opts["--timeout"]), opts["--session"], infiles)
     else:
         print(__doc__)

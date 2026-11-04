@@ -1,6 +1,6 @@
 {
   "name": "jlceda-pcb",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "用嘉立创EDA专业版官方命令行脚本化画原理图/PCB、DRC、导出 Gerber/BOM/坐标并直接下单；支持导入 KiCad 工程",
   "author": {
     "name": "wusezhiren"
