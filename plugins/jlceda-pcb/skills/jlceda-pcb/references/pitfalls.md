@@ -94,3 +94,6 @@
 - 立创导出的 DSN 里每个网络 class 的 `(clearance 4.02)` 比全局 `(rule (clear 6.03))` 小，Freerouting 按 class 值布线，导回后立创 DRC 按 6mil 报大量 Track to Via / Pad to Track；`freeroute.py` 默认把 class 间距统一成全局值。
 - Freerouting 2.5.0 整板布线会把部分已布通网络整条漏写进 SES（UART_RX 单独布正常，整板时 SES 里没有、日志也不报未布通），表现为导回后芯片引脚大量 Connection Error。改用 1.9（`freeroute.py` 默认 `--engine 19`，需要 DISPLAY）。检查办法：拿 DSN 的引脚坐标逐个比对 SES 走线端点。
 - 0.4mm 间距 QFN（焊盘 0.28mm，焊盘与走线间距规则 0.152mm）进脚线宽上限约 0.216mm；DSN 默认 10mil 线宽会让芯片引脚一根都进不去，`freeroute.py` 默认信号线 6mil。
+- 立创 `importAutoRouteSesFile` 不读 SES 里的线宽，导回的线一律是默认 10mil；细线布线导回后会大量报间距错误。`freeroute.py` 导回后按端点匹配 SES 线段写回线宽。
+- 0.4mm QFN 旁用 0.61mm 过孔几乎无法逃逸；`freeroute.py` 默认信号过孔 0.45/0.2mm（功率网络保留大孔），导回后按坐标改回小孔尺寸，并把设计规则 Via Size 下限放宽（`overwriteCurrentRuleConfiguration(rc.config)`，传整个返回对象会失败返回 false）。
+- 差分对/成组信号两端引脚次序相反（如芯片 DM 在上、串阻 DM 在右）会强制交叉，自动布线必失败：摆件时让串阻/排针的次序与芯片引脚次序一致，必要时改排针脚位分配。

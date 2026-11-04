@@ -51,6 +51,9 @@ ap.add_argument('--clearance', type=float, default=None, help='网络类间距�
 ap.add_argument('--width', type=float, default=6, help='信号线宽（mil）。0.4mm 间距 QFN（焊盘 0.28mm、焊盘间距规则 0.152mm）进脚线宽不能超过约 8.5mil，默认 10mil 会导致芯片引脚全布不进去')
 ap.add_argument('--net-width', default='+3V3:8,VBUS:12,+5V:12,OUT+:20', help='按网络单独指定线宽，NET:mil 逗号分隔')
 ap.add_argument('--engine', default='19', choices=list(ENGINES), help='Freerouting 版本：19（默认）或 25')
+ap.add_argument('--via', default='0.45,0.2', help='信号网络过孔 外径,孔径（mm）。默认 0.45/0.2（嘉立创 4 层可做）；0.4mm QFN 旁 0.61mm 过孔几乎没有逃逸位置。传空串则用 DSN 原过孔')
+ap.add_argument('--big-via-nets', default='VBUS,+5V,OUT+', help='仍用 DSN 原（大）过孔的网络')
+ap.add_argument('--edge-clear', type=float, default=0.4, help='板边禁布带宽度（mm）；DSN 没带板边间距规则，走线会贴边（立创默认要求 ≥0.3mm）')
 ap.add_argument('--no-import', action='store_true', help='只布线不导回')
 a = ap.parse_args()
 out_dir = Path(a.out); out_dir.mkdir(parents=True, exist_ok=True)
@@ -84,6 +87,13 @@ absent = [r for r in regs if r not in in_dsn]
 for k in a.keepout:
     x0, y0, x1, y1 = (float(v) / 0.0254 for v in k.split(','))
     absent.append({'id': 'cli', 'bbox': [x0, y0, x1, y1]})
+if a.edge_clear > 0:
+    b = re.search(r'\(boundary\s*\(path signal [\d.]+ ([-\d. ]+)\)', text)
+    if b:
+        v = [float(t) for t in b.group(1).split()]; xs, ys = v[0::2], v[1::2]
+        X0, X1, Y0, Y1, e = min(xs), max(xs), min(ys), max(ys), a.edge_clear / 0.0254
+        for bb in ([X0, Y0, X1, Y0 + e], [X0, Y1 - e, X1, Y1], [X0, Y0, X0 + e, Y1], [X1 - e, Y0, X1, Y1]):
+            absent.append({'id': 'edge', 'bbox': bb})
 for ly in [x for x in a.plane_layers.split(',') if x]:
     text, k = re.subn(r'(\(layer ' + re.escape(ly) + r'\s*\(type )signal', r'\1power', text)
     # 只标 power 不够：没有 plane 定义时 Freerouting 仍当信号层用；按板框补一个覆盖整板的平面
@@ -104,8 +114,20 @@ nw = dict((k, float(v)) for k, v in (x.rsplit(':', 1) for x in a.net_width.split
 text = re.sub(r'\(rule\s*\(width [\d.]+\)\)', f'(rule(width {a.width}))', text)
 def _cw(m):
     return re.sub(r'\(width [\d.]+\)', f'(width {nw.get(m.group(1), a.width)})', m.group(0), count=1)
-text = re.sub(r"\(class (\S+) '[^\n]*\n(?:.*\n)*?\s*\(width [\d.]+\)", _cw, text)
+text = re.sub(r"\(class (\S+) ['\"][^\n]*\n(?:.*\n)*?\s*\(width [\d.]+\)", _cw, text)
 print(f'线宽：默认 {a.width} mil，单独指定 {nw}')
+VIA_S = None
+if a.via:
+    vd, vh = (float(v) for v in a.via.split(','))
+    VIA_S = (vd, vh); dmil = round(vd * 39.3701, 2)
+    lays = re.findall(r'\(layer (\S+)\s*\(type (?:signal|power)', text)
+    pad = '    (padstack via_s\n' + ''.join(f'      (shape(circle {l} {dmil}))\n' for l in lays) + '    )\n'
+    text = re.sub(r'(\n\s*\(padstack via0\b)', '\n' + pad.rstrip('\n') + r'\1', text, count=1)
+    text = re.sub(r'\(via (via0[^)]*)\)', r'(via \1 via_s)', text, count=1)
+    big = set(x for x in a.big_via_nets.split(',') if x)
+    text = re.sub(r"(\(class (\S+) [^\n]*\n\s*\(circuit\s*\n?\s*\(use_via )via0", lambda m: m.group(1) + ('via0' if m.group(2) in big else 'via_s'), text)
+    text = re.sub(r"(\(class\s+''\s*\n\s*\(circuit\s*\n?\s*\(use_via )via0", r'\1via_s', text)
+    print(f'信号过孔 {vd}/{vh}mm（via_s），大过孔网络 {sorted(big)}')
 work = out_dir / 'work.dsn'; work.write_text(text, encoding='utf-8')
 if in_dsn:
     man = out_dir / 'regions.json'; man.write_text(json.dumps({'regions': in_dsn}), encoding='utf-8')
@@ -143,7 +165,19 @@ if not ses.exists(): sys.exit(f'没有生成 SES，见 {log}')
 
 # 5. 导回
 if a.no_import: sys.exit(0)
+# 立创 importAutoRouteSesFile 不读 SES 线宽，一律按默认 10mil 建线 → 细线规则全部失效、间距报错。
+# 先从 SES 取每段线 [x1,y1,x2,y2,宽]（mil，与 PCB 同原点），导回后按端点匹配写回线宽
+ses_txt = ses.read_text(errors='ignore'); m_res = re.search(r'\(routes\s*\(resolution mil (\d+)\)', ses_txt)
+div = float(m_res.group(1)) if m_res else 1000.0
+segs = []
+for w, body in re.findall(r'\(path \S+ (\d+)\s+([-\d\s]+)\)', ses_txt):
+    pts = [int(v) / div for v in body.split()]
+    xy = list(zip(pts[0::2], pts[1::2]))
+    segs += [[round(x1, 2), round(y1, 2), round(x2, 2), round(y2, 2), round(int(w) / div, 2)] for (x1, y1), (x2, y2) in zip(xy, xy[1:])]
+vias_s = [[int(x) / div, int(y) / div] for x, y in re.findall(r'\(via via_s (-?\d+) (-?\d+)', ses_txt)]
 res = lceda('''await openPcb();
+const before = new Set((await eda.pcb_PrimitiveLine.getAll()).map(l => l.getState_PrimitiveId()));
+const beforeV = new Set((await eda.pcb_PrimitiveVia.getAll()).map(v => v.getState_PrimitiveId()));
 const ok = await eda.pcb_Document.importAutoRouteSesFile(fileIn('board.ses'));
 await sleep(2000);
 // SES 会把 DSN 里原有的固定导线/过孔再建一遍，按坐标去重
@@ -158,7 +192,28 @@ for (const l of await eda.pcb_PrimitiveLine.getAll()) {
 	const k = [l.getState_Net(), l.getState_Layer(), p].join('|');
 	if (seen.has(k)) { await eda.pcb_PrimitiveLine.delete([l.getState_PrimitiveId()]); dup++; } else seen.add(k);
 }
+const SEG = ''' + json.dumps(segs) + ''';
+const near = (ax, ay, bx, by) => Math.abs(ax - bx) < 1 && Math.abs(ay - by) < 1;
+let widthFixed = 0, widthMiss = 0;
+for (const l of await eda.pcb_PrimitiveLine.getAll()) {
+	if (before.has(l.getState_PrimitiveId())) continue;
+	const x1 = l.getState_StartX(), y1 = l.getState_StartY(), x2 = l.getState_EndX(), y2 = l.getState_EndY();
+	const sg = SEG.find(q => (near(q[0], q[1], x1, y1) && near(q[2], q[3], x2, y2)) || (near(q[0], q[1], x2, y2) && near(q[2], q[3], x1, y1)));
+	if (!sg) { widthMiss++; continue; }
+	if (Math.abs(l.getState_LineWidth() - sg[4]) > 0.05) { await eda.pcb_PrimitiveLine.modify(l.getState_PrimitiveId(), { lineWidth: sg[4] }); widthFixed++; }
+}
+const VS = ''' + json.dumps(vias_s) + ''', VSZ = ''' + json.dumps([v * 39.3701 for v in VIA_S] if VIA_S else None) + ''';
+let viaFixed = 0, viaRule = null;   // 立创导回 SES 过孔也用默认尺寸：按坐标把 via_s 过孔改回小孔
+if (VSZ) {   // 设计规则过孔下限默认 0.3/0.3mm，小孔会报 Via Size：同步放宽到所用尺寸（用前确认板厂工艺）
+	const rc = await eda.pcb_Drc.getCurrentRuleConfiguration(); const vf = rc.config.Physics['Via Size'].viaSize.form;
+	vf.viaOuterdiameterMin = Math.min(vf.viaOuterdiameterMin, VSZ[0] / MM); vf.viaInnerdiameterMin = Math.min(vf.viaInnerdiameterMin, VSZ[1] / MM);
+	viaRule = await eda.pcb_Drc.overwriteCurrentRuleConfiguration(rc.config);
+}
+if (VSZ) for (const v of await eda.pcb_PrimitiveVia.getAll()) {
+	if (beforeV.has(v.getState_PrimitiveId())) continue;
+	if (VS.some(q => near(q[0], q[1], v.getState_X(), v.getState_Y()))) { await eda.pcb_PrimitiveVia.modify(v.getState_PrimitiveId(), { diameter: VSZ[0], holeDiameter: VSZ[1] }); viaFixed++; }
+}
 await eda.pcb_Document.save();
-return { ok, dup, lines: (await eda.pcb_PrimitiveLine.getAll()).length, vias: (await eda.pcb_PrimitiveVia.getAll()).length };''', infiles=[ses], timeout=300)
+return { ok, dup, widthFixed, widthMiss, viaFixed, viaRule, lines: (await eda.pcb_PrimitiveLine.getAll()).length, vias: (await eda.pcb_PrimitiveVia.getAll()).length };''', infiles=[ses], timeout=300)
 print(f"导回 SES：{res}")
 print('下一步：重建铺铜（rebuildPours / 自己的 pour 脚本）→ drcSummary() 分类核对连通与间距')
