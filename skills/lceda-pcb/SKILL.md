@@ -1,5 +1,5 @@
 ---
-name: jlceda-pcb
+name: lceda-pcb
 description: 使用嘉立创EDA专业版官方CLI原生绘制、参考旧板重画及修改原理图和PCB，配置官方Freerouting插件或DSN/SES外部布线，核对网表、DRC并导出生产文件。适用于立创EDA画板、自动布线慢、原生重画和整理制板流程；优惠券资格需按具体活动另行确认。
 ---
 

@@ -4,15 +4,15 @@
     "name": "wusezhiren"
   },
   "metadata": {
-    "description": "PCB 从需求到嘉立创下单的 Claude Code skill：嘉立创EDA 脚本化设计（jlceda-pcb）",
-    "version": "2.2.0"
+    "description": "PCB 从需求到嘉立创下单的 Claude Code skill：嘉立创EDA 脚本化设计（lceda-pcb）",
+    "version": "3.0.0"
   },
   "plugins": [
     {
-      "name": "jlceda-pcb",
+      "name": "lceda-pcb",
       "source": "./",
       "description": "用嘉立创EDA专业版官方命令行脚本化画原理图/PCB、DRC、导出 Gerber/BOM/坐标并下单；含免费打样券规则、下单助手；支持导入 KiCad 工程",
-      "version": "2.2.0",
+      "version": "3.0.0",
       "category": "hardware"
     }
   ]

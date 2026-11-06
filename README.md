@@ -1,6 +1,6 @@
 # lceda-skill
 
-让 Claude Code 用**嘉立创EDA专业版**把 “我想要一块 X 功能的小板” 一路做到**嘉立创可下单**的 skill：`jlceda-pcb`。
+让 Claude Code 用**嘉立创EDA专业版**把 “我想要一块 X 功能的小板” 一路做到**嘉立创可下单**的 skill：`lceda-pcb`。
 
 - 用桌面客户端自带的官方命令行 `lceda-pro`，以脚本画原理图和 PCB、自动布线、铺铜、DRC、导出 Gerber/BOM/坐标文件
 - 元件按立创 C 编号放置，用嘉立创库封装，贴片方向不出错；原生设计可以用嘉立创 EDA 免费打样券
@@ -25,9 +25,9 @@ npx skills add wusezhiren/lceda-skill -a claude-code
 更新、查看、卸载：
 
 ```bash
-npx skills update jlceda-pcb        # 拉取最新版本
+npx skills update lceda-pcb        # 拉取最新版本
 npx skills ls -g                    # 查看已装 skill
-npx skills remove jlceda-pcb -g     # 卸载
+npx skills remove lceda-pcb -g     # 卸载
 ```
 
 国内网络慢时可加 npm 镜像：`npx --registry=https://registry.npmmirror.com skills add wusezhiren/lceda-skill -g -a claude-code`。
@@ -38,16 +38,22 @@ Claude Code 插件市场（仍然可用）：
 
 ```bash
 claude plugin marketplace add wusezhiren/lceda-skill
-claude plugin install jlceda-pcb@lceda-skill
+claude plugin install lceda-pcb@lceda-skill
 ```
 
-2.2.0 起仓库改为 `skills/jlceda-pcb/` 布局（原 `plugins/jlceda-pcb/skills/jlceda-pcb/`）。用插件方式装过旧版的，执行一次 `claude plugin marketplace update lceda-skill` 再 `claude plugin update jlceda-pcb@lceda-skill`；改用 npx 的，先 `claude plugin uninstall jlceda-pcb@lceda-skill` 避免重复加载。
+**从旧名 `jlceda-pcb` 升级**：3.0.0 起 skill 改名为 `lceda-pcb`（目录 `skills/lceda-pcb/`，调用名 `/lceda-pcb`），内容不变。旧名不会自动迁移，先卸载再重装：
+
+```bash
+npx skills remove jlceda-pcb -g && npx skills add wusezhiren/lceda-skill -g -a claude-code       # npx 安装的
+claude plugin uninstall jlceda-pcb@lceda-skill && claude plugin marketplace update lceda-skill \
+  && claude plugin install lceda-pcb@lceda-skill                                                 # 插件安装的
+```
 
 手动拷贝：
 
 ```bash
 git clone https://github.com/wusezhiren/lceda-skill.git
-cp -r lceda-skill/skills/jlceda-pcb ~/.claude/skills/
+cp -r lceda-skill/skills/lceda-pcb ~/.claude/skills/
 ```
 
 ## 前置条件

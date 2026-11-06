@@ -1,4 +1,4 @@
-// ===== jlceda-pcb 公共函数（lceda.py 会把本文件拼在每个脚本前面） =====
+// ===== lceda-pcb 公共函数（lceda.py 会把本文件拼在每个脚本前面） =====
 // 坐标单位：原理图 = 0.01 inch（10mil）；PCB = mil。
 
 let __sysLib = null;
