@@ -9,6 +9,7 @@
   python3 lceda.py exec 'return await eda.dmt_Project.getCurrentProjectInfo()'
   python3 lceda.py run export.js --out jlcpcb/          # 返回值里的 fileOut(...) 写到 jlcpcb/
   python3 lceda.py run import.js --in project.zip       # 脚本里 fileIn("project.zip") 取回 File
+  python3 lceda.py run scripts/pcb_dump.js --json dump.json  # 返回值整体写入 JSON 文件，只打印摘要
 
 run/exec 会自动在脚本前拼上 lib.js（公共函数），脚本内容是 async 函数体：
 可 await，用 return 返回（需可 JSON 序列化），参数在 ARGS（= __CLI__.args）。
@@ -118,7 +119,7 @@ def main(argv):
         print(__doc__)
         return 0
     cmd, rest = argv[0], argv[1:]
-    opts = {"--args": None, "--args-file": None, "--timeout": "120", "--session": None, "--out": "."}
+    opts = {"--args": None, "--args-file": None, "--timeout": "120", "--session": None, "--out": ".", "--json": None}
     infiles = []
     pos = []
     i = 0
@@ -150,6 +151,13 @@ def main(argv):
         return 2
     if r.get("ok"):
         value = save_files(r.get("value"), opts["--out"])
+        if opts["--json"]:
+            # 大结果（几何导出、DRC 明细）直接落盘，对话里只看摘要；注意 --out 是目录，只接 fileOut 文件
+            with open(opts["--json"], "w", encoding="utf-8") as f:
+                json.dump(value, f, ensure_ascii=False)
+            keys = list(value)[:12] if isinstance(value, dict) else f"list[{len(value)}]" if isinstance(value, list) else type(value).__name__
+            print(json.dumps({"json": opts["--json"], "bytes": os.path.getsize(opts["--json"]), "keys": keys}, ensure_ascii=False))
+            return 0
         print(json.dumps(value, ensure_ascii=False, indent=1))
         return 0
     print(json.dumps(r.get("error"), ensure_ascii=False, indent=1), file=sys.stderr)

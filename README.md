@@ -9,35 +9,53 @@
 
 > 2.0.0 起移除了 KiCad 全流程插件 `pcb-jlc-pipeline`，只保留嘉立创EDA 路线。需要旧版可检出 tag/提交 `8ce045e`。
 
-## 安装
+## 安装（推荐：npx skills）
+
+用 [skills](https://github.com/vercel-labs/skills) 命令行安装，需要 Node.js ≥ 18：
+
+```bash
+# 装到用户级（所有项目可用），指定给 Claude Code
+npx skills add wusezhiren/lceda-skill -g -a claude-code
+
+# 只装到当前项目（写入 ./.claude/skills，可随项目提交）
+npx skills add wusezhiren/lceda-skill -a claude-code
+```
+
+不加 `-a` 会交互选择要装到哪些代理（Claude Code、Cursor、Codex 等）；加 `-y` 跳过确认。
+更新、查看、卸载：
+
+```bash
+npx skills update jlceda-pcb        # 拉取最新版本
+npx skills ls -g                    # 查看已装 skill
+npx skills remove jlceda-pcb -g     # 卸载
+```
+
+国内网络慢时可加 npm 镜像：`npx --registry=https://registry.npmmirror.com skills add wusezhiren/lceda-skill -g -a claude-code`。
+
+### 其他方式
+
+Claude Code 插件市场（仍然可用）：
 
 ```bash
 claude plugin marketplace add wusezhiren/lceda-skill
 claude plugin install jlceda-pcb@lceda-skill
 ```
 
-（在 Claude Code 里也可以用 `/plugin marketplace add wusezhiren/lceda-skill`。）更新：
+2.2.0 起仓库改为 `skills/jlceda-pcb/` 布局（原 `plugins/jlceda-pcb/skills/jlceda-pcb/`）。用插件方式装过旧版的，执行一次 `claude plugin marketplace update lceda-skill` 再 `claude plugin update jlceda-pcb@lceda-skill`；改用 npx 的，先 `claude plugin uninstall jlceda-pcb@lceda-skill` 避免重复加载。
 
-```bash
-claude plugin marketplace update lceda-skill
-claude plugin update jlceda-pcb@lceda-skill
-```
-
-之前装过 `pcb-jlc-pipeline` 的：`claude plugin uninstall pcb-jlc-pipeline@lceda-skill`。
-
-不用插件机制也行，直接拷到用户 skill 目录：
+手动拷贝：
 
 ```bash
 git clone https://github.com/wusezhiren/lceda-skill.git
-cp -r lceda-skill/plugins/jlceda-pcb/skills/jlceda-pcb ~/.claude/skills/
+cp -r lceda-skill/skills/jlceda-pcb ~/.claude/skills/
 ```
 
 ## 前置条件
 
 - Linux / macOS / Windows 桌面，**嘉立创EDA专业版桌面客户端 ≥ 4.1.70**（浏览器版不支持命令行）。
-  Linux 可让 Claude 运行 `skills/jlceda-pcb/scripts/setup_lceda.sh`：免 sudo 下载解压到 `~/tools/lceda-pro`。
+  Linux 可让 Claude 运行 skill 里的 `scripts/setup_lceda.sh`：免 sudo 下载解压到 `~/tools/lceda-pro`。
 - 首次启动要**你自己**在客户端窗口里登录嘉立创账号，并下载、导入激活文件（免费）。
-- Python 3（脚本只用标准库）。
+- Python 3。基础脚本只用标准库；铺铜后 GND 孤岛分析/寻路、拐角倒角（`gnd_islands.py`、`gnd_route.py`、`chamfer.py`）另需 `pip install shapely numpy matplotlib`。
 - 不需要安装任何扩展，也不需要开启“外部交互权限”（文件进出走 base64）。
 
 ## 用法
@@ -56,5 +74,7 @@ cp -r lceda-skill/plugins/jlceda-pcb/skills/jlceda-pcb ~/.claude/skills/
 - 嘉立创EDA专业版 Linux x64 4.1.93：原生路线（按立创编号放器件 → 网络连线 → 导入 PCB → 摆件 → 自动布线 → 铺铜 → DRC 0 错 → 导出）实测通过。
 - KiCad 9 工程导入：ESP32-C3 开关板（55×22mm，38 器件 / 352 走线 / 104 过孔，立创编号 32 个），导入后 DRC 0，导出下单文件。
 - 嘉立创下单助手 Linux 5.0.69：免 sudo 运行，下单页参数自动填写。
+
+- 2.2.0：ESP32-C3 单路 MOS 开关板（20×33mm 双层，31 器件）铺铜后 GND 碎成 16 处 Connection Error，用 `gnd_islands.py` → `gnd_route.py` → `apply_stitch.js` 修到 DRC 0，`chamfer.py` 倒角 50 处。
 
 实测踩过的坑见 `references/pitfalls.md`；摆件/天线/布线规则见 `references/layout-rules.md`；下单与免费券见 `references/ordering.md`。

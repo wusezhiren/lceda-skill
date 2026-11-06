@@ -7,7 +7,7 @@ description: 使用嘉立创EDA专业版官方CLI原生绘制、参考旧板重�
 
 嘉立创EDA专业版桌面客户端（≥4.1.70）内置官方命令行 `lceda-pro`：`invoke` 在正在运行的编辑器里执行 JavaScript，等于能调用全部扩展 API（`eda.*`）。本 skill 把它封装成：
 
-- `scripts/lceda.py`：找会话、拼接 `lib.js`、执行脚本、解析 JSON、文件进出（`--in` / `--out`）
+- `scripts/lceda.py`：找会话、拼接 `lib.js`、执行脚本、解析 JSON、文件进出（`--in` / `--out` 目录收 `fileOut` 文件；`--json 文件` 把整个返回值落盘只打印摘要）
 - `scripts/sch_style.js`：分区式 EVB 原理图版式函数（`frame/QT/place/W/NL/PWR/GND/PORT/OPORT/NC`），拼在 lib.js 之后使用，见 `references/schematic-layout.md`“推荐版式”
 - `scripts/lib.js`：实测可用的公共函数（放器件、连线、导入 PCB 自动确认、板框、摆件、铺铜、DRC 汇总、文件 base64 进出、过孔规则）
 - `scripts/freeroute.py`：**默认自动布线**，DSN 导出 → Freerouting 无界面 → SES 导回一条命令
@@ -16,13 +16,18 @@ description: 使用嘉立创EDA专业版官方CLI原生绘制、参考旧板重�
 - `scripts/verify_native_netlist.py`：按器件引脚集合核对原生导出网表，发现缺脚、漏网或错网时返回非零
 - `scripts/pcb_dump.js` + `scripts/pcb_check.py` + `scripts/pcb_render.py`：导出 PCB 几何 → 本地查焊盘间距/近板边/器件互压/丝印重叠 → 渲染 PNG 目视；摆件每改一轮都跑
 - `scripts/pcb_silk.js`：位号统一字号、自动找不重叠位置，放不下的隐藏并列出
+- `scripts/gnd_islands.py` + `scripts/gnd_route.py` + `scripts/apply_stitch.js`：铺铜后按实际填充算 GND 连通 → 列出真孤岛 → 缝合孔/网格寻路（避开异网络铜、可打孔换层）接回主地 → 下发、重铺、DRC 一条命令（`pcbgeo.py` 为共用几何模块，需 `pip install shapely`）
+- `scripts/gnd_stitch.py`：单个地焊盘就近补"短线 + 地孔"（布线后、铺铜前也能用）
+- `scripts/chamfer.py`：≤134° 走线拐角自动切 45° 并校核间距，结果同样用 `apply_stitch.js` 下发
 - `scripts/jlc_search.py`：嘉立创元件查询（`@` 前缀只查基础库），不依赖客户端
 - `scripts/kicad2jlceda.py`：已有 KiCad 工程 → 嘉立创EDA 工程 → 下单文件，一条命令（本机不需要装 KiCad）
 - `scripts/examples/`：`native_demo.js`（原生全流程）、`import_kicad.js`（KiCad 导入）、`export.js`（导出生产文件）
 
-**省 token**：优先用现成的一条命令脚本（`kicad2jlceda.py`）和 `lceda.py` 的 `--out` 落盘，只看摘要；JS 里 `return` 精简结果（计数、前几条），不要把整个器件列表/DRC 树返回到对话里。
+**省 token**：优先用现成的一条命令脚本（`kicad2jlceda.py`）和 `lceda.py` 的 `--out` / `--json` 落盘，只看摘要；JS 里 `return` 精简结果（计数、前几条），不要把整个器件列表/DRC 树返回到对话里。
 
 参考资料：`references/design-review.md`（方案自查）、`references/pcb-layout-workflow.md`（**PCB 布局流程：面积账 → 锚点 → 按焊盘坐标摆 → 查/看循环 → 固定几何 → 布线 → 丝印**）、`references/layout-rules.md`（摆件/天线/布线规则）、`references/ordering.md`（下单参数、免费券、下单助手）。遇到报错先查 `references/pitfalls.md`；API 细节以客户端自带文档为准：`lceda-pro doc api --class-name <类> --method-name <方法>`。
+
+布局布线还须遵循 `references/layout-emc-principles.md`：机械约束先行、模块化布局、短回路去耦、连续参考地、关键网络优先、热设计与可维修性检查；经验数值不替代数据手册、实际层叠及板厂工艺。
 
 ## 0. 环境（每台电脑一次）
 
@@ -69,9 +74,23 @@ python3 scripts/lceda.py sessions    # 会话标题不能是 "Regist"
 4. **导入 PCB**：`importToPcb()`（自动点“应用修改”），检查返回 `{ok:true, clicked:'应用修改'}`，再 `pcb_PrimitiveComponent.getAll()` 核对数量和焊盘网络。
 5. **板框与摆件**：**模块化布局优先**——先按原理图分区拆模块，每个模块参照对应芯片官网的参考设计/数据手册 Layout 指南单独排好并核对，再用 `pcbPlaceModules()` 把模块整体集中摆到板上（流程见 `references/pcb-layout-workflow.md`“模块化布局”）。先按同一文档算面积账（不够就先改选型/板框并告知用户，不硬摆），再 `boardOutline(w, h)`（mm）、`pcbPlace({位号:[x,y,rot,'TOP'], ...})`。外围件按 `pcb_dump.js` 读出的**真实焊盘坐标**相对摆放；每轮 `pcb_check.py` 报 0 项、`pcb_render.py` 看图后再继续。摆件规则见 `references/layout-rules.md`。
 6. **布线（默认 Freerouting）**：射频、功率主干、地孔等关键几何先画好，然后
+   **走线与接地顺序**：PCB 走线优先采用内夹角 135° 的钝角折线（走向改变 45°）或圆弧过渡，避免锐角回折和直角；分支及焊盘入口也需避免形成尖角，导入自动布线结果后逐项检查。执行顺序固定为：**先完成全部电源与信号网络的走线及连通核对 → 地焊盘就近补 GND 过孔与必要短连 → 在可用空白区域适当多放 GND 缝合过孔 → 最后创建并重建顶层、底层 GND 铺铜 → 完整 DRC 与回流检查**。普通 GND 过孔放在地焊盘附近的可用铜面，不直接压在器件引脚或贴片焊盘中心，通过短线就近连接后再由铺铜汇入地平面；只有明确用于 EPAD 灌锡、散热或封装推荐的孔才允许位于对应焊盘区域。自动布线默认跳过 GND，GND 优先通过就近过孔与铺铜连接，不用长地线逐一串联地端；确因铜面隔断或局部回流需要时才补必要地线。关键去耦、ESD 及功率回流的地孔位置应提前预留，不能被信号走线挤占；铺铜前只对非 GND 网络做连通核对，最终必须确认包括 GND 在内的所有网络连通，无孤岛或回流绕远。
    `python3 scripts/freeroute.py --out <工作目录>/fr --passes 20`（导出 DSN → 剔除 GND 等铺铜网络 → 规则区转 keepout → Freerouting 1.9 布线（默认 `--engine 19`，需 DISPLAY；2.5 有漏写 SES 的问题） → 导回 SES，一条命令；Java 25 / jar 路径见脚本头）。没有布通的连接先查摆件/通道，再局部改线或换参数重跑；内置 `autoRouting()` 只用于个别网络补线（小板也可能跑十几分钟且结果被回滚）。用户点名要官方插件时按 `references/native-freerouting.md` 方案2在界面操作，不把命令行 DSN/SES 往返说成插件。布线器完成、函数返回成功均不代表电气连通或 DRC 通过。
-7. **铺铜**：`pourGnd(w, h)` 两面 GND；天线区等禁布区先画规则区再铺。
+7. **铺铜**：顶层和底层的铺铜统一使用 **GND 网络**，通过 `pourGnd(w, h)` 创建；不得将整面或局部铺铜设为电源、信号或无网络。电源和功率主干使用明确归属网络的走线或必要的局部实心铜图元（Fill），并与 GND 铺铜保持规则间距。天线区等禁布区先画规则区再铺，重建后核对上下层每个铺铜对象的网络均为 GND。
+   **接地过孔适当加密**：默认主动增加上下层 GND 缝合过孔，优先布在模组接地周围、去耦电容地端、稳压器与 USB ESD 地端、功率回流及板边可用区域；大电流跨层回流采用并联地孔，不依赖单个过孔。按回流路径和可用空间布置，不机械追求数量；避开模组天线净空、槽孔、板边及所有层的异网络铜皮，孔径与间距符合实际制板工艺。加孔后重建铺铜，核对每个地孔实际接入 GND，重新检查间距和连通性。
+   **过孔尺寸与费用**：普通信号过孔和 GND 缝合过孔优先采用嘉立创在当前板层、板厚、工艺及订单条件下**不加价的最小成品孔径**，外径同时满足对应环宽、可靠性与 DRC 要求。选型前核对当前官方工艺／报价条件，不将固定孔径或“免费”资格视为永久规则。只有密集逃线等明确特殊需求才采用更小孔径，并记录工艺、费用及可靠性影响；大电流、散热或灌锡等需求可采用较大孔径与外径，结合电流、孔铜厚度、温升及压降确定并联孔数，不能仅凭孔大就认定载流足够。脚本、自动布线器及 DRC 的孔径／外径设置须保持一致。
+   **空白区域补小地孔**：在上下层有 GND 铜面、空间允许的空白区域适当增加小尺寸 GND 缝合过孔，使两面地铜有效连接；尺寸遵循上述不加价最小孔径原则，孔径 0.3mm、外径 0.6mm 仅作为待核对工艺的示例，不是固定默认值。默认实心连接，不以盲目增加数量代替回流设计；避开天线净空、安装／槽孔、板边、所有层的异网络铜及手焊操作区域，保持孔到孔及铜间距，不让密集反焊盘割裂电源或参考地。补孔后重建铺铜，检查每个孔确实接入 GND、无孤岛及新增 DRC 问题。
+7a. **GND 孤岛修复**（铺铜后 DRC 有 `Connection Error`/GND 时）：DRC 报的是孤岛间缺失飞线的**一个端点**，常落在主地一侧，不要按报点逐个补线。固定流程：
+   ```bash
+   python3 scripts/lceda.py run scripts/pcb_dump.js --timeout 300 --json w/dump.json
+   python3 scripts/gnd_islands.py w/dump.json --png w/islands.png        # 真孤岛清单（与 DRC 一致时为 0）
+   python3 scripts/gnd_route.py w/dump.json w/st.json --stitch 1.6 --no-route --keepout <天线净空>   # 先缝合孔并大块
+   python3 scripts/lceda.py run scripts/apply_stitch.js --args-file w/st.json --timeout 600        # 下发+重铺+DRC
+   # 重新 dump → gnd_route.py（不带 --stitch）逐岛寻路 → apply；无路径时 --width 0.2 --gap 0.16，再不行就挪挡路的信号线
+   ```
+   先查根因：整排横贯的底层电源/信号线会把地平面一切两半，优先改走线或在其两侧上方用顶层铜跨接打孔；模组 EPAD 子焊盘常被铺铜整圈让开，顶层子焊盘连井字形地线、底层 EP 通孔向外拉线接主地。修完 `chamfer.py` 倒角、`pcb_silk.js` 整理后再跑一轮 DRC。
 7b. **丝印**：`pcb_silk.js` 整理位号，`pcb_check.py --silk` 无重叠；功能标注（极性、测试点、板名）单独放。
+   **铺铜连接方式**：普通 GND 缝合过孔默认采用直接／实心连接（Direct／Solid），不使用十字热焊连接；核对实际铺铜结果，确保铜面连续接入。普通需手焊的器件接地焊盘默认保留热焊连接，兼顾可焊性；模组 EPAD 灌锡通孔结合焊接工艺单独设置，直接连接有利于接地与散热，但需考虑大铜面吸热，必要时预热或热风辅助。不得将过孔的实心连接设置不加区分地套用到全部手焊焊盘。修改连接方式后重建铺铜并重新检查间距与连通性。
 8. **DRC**：`drcSummary()` 核对间距与连通性。目标为0；固定障碍、格式丢失约束等问题先定位，不反复无限重跑，不通过放宽规则制造通过。未通过时保存试验版并明确剩余问题，不导出正式生产包。
 9. **保存**：`eda.pcb_Document.save()`。
 

@@ -47,7 +47,8 @@ def overlap(A, B): return A[0] < B[2] and B[0] < A[2] and A[1] < B[3] and B[1] <
 pads, env = [], {}
 for ref, c in d['comps'].items():
     boxes = []
-    for num, net, x, y, sh, w, h, rot, lay in c['pads']:
+    for num, net, x, y, sh, w, h, rot, lay, *_ in c['pads']:   # 旧版导出可能 w/h/rot 为 null（多边形焊盘）
+        w, h = w or 0.1, h or 0.1
         b = pad_box(x, y, w, h, rot); boxes.append(b)
         circ = (x, y, w / 2) if sh == 'ELLIPSE' and abs(w - h) < 1e-3 else None
         pads.append((f'{ref}.{num}', ref, net, b, 0 if lay == 12 else lay, circ))

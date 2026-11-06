@@ -45,7 +45,7 @@
 
 ```bash
 python3 scripts/lceda.py run place.js --timeout 200          # 自己的摆件表：{位号:[x,y,rot,'TOP'|'BOTTOM']}，用 lib.js 的 pcbPlace()
-python3 scripts/lceda.py run scripts/pcb_dump.js --timeout 200 > dump.json
+python3 scripts/lceda.py run scripts/pcb_dump.js --timeout 200 --json dump.json
 python3 scripts/pcb_check.py dump.json --gap 0.15             # 焊盘间距、近板边、器件互压
 python3 scripts/pcb_render.py dump.json r.png all             # 目视
 ```
@@ -76,7 +76,7 @@ python3 scripts/freeroute.py --out work/fr --passes 20      # 默认剔除 GND�
 
 ```bash
 python3 scripts/lceda.py run scripts/pcb_silk.js --args '{"size":0.6}' --timeout 200
-python3 scripts/lceda.py run scripts/pcb_dump.js > dump.json && python3 scripts/pcb_check.py dump.json --silk
+python3 scripts/lceda.py run scripts/pcb_dump.js --json dump.json && python3 scripts/pcb_check.py dump.json --silk
 ```
 
 位号统一字高（0201 板 0.5~0.6mm、线宽 0.1mm）、居中、不旋转；脚本按器件四周 8 个方位逐圈找空位，放不下的隐藏并列出（交付时说明靠装配图定位）。功能标注（OUT+/OUT−、测试点名、板名版本）用 `pcb_PrimitiveString` 单独放，放好后再跑一次 `pcb_silk.js` 前先把这些位置作为障碍考虑（必要时手动微调）。

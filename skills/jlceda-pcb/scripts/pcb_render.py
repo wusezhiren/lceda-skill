@@ -36,6 +36,7 @@ for layer, net, x1, y1, x2, y2, w in d.get('lines', []):
 def pad(x, y, shape, w, h, rot, layer, net):
     if side == 'top' and layer == 2 or side == 'bottom' and layer == 1: return
     c = {1: (220, 50, 50, 230), 2: (50, 110, 250, 230), 12: (200, 200, 200, 230)}.get(layer, (200, 200, 50, 230))
+    w, h = w or 0.1, h or 0.1
     a = math.radians(rot or 0); ca, sa = math.cos(a), math.sin(a)
     pts = [(x + ca * u - sa * v, y + sa * u + ca * v) for u, v in [(-w / 2, -h / 2), (w / 2, -h / 2), (w / 2, h / 2), (-w / 2, h / 2)]]
     if shape in ('ELLIPSE', 'OVAL'): g.ellipse([X(x - w / 2), Y(y + h / 2), X(x + w / 2), Y(y - h / 2)], fill=c)

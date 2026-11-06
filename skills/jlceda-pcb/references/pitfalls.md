@@ -49,11 +49,18 @@
 - 多边形：`eda.pcb_MathPolygon.createPolygon([x, y, 'L', x2, y2, ...])`；铺铜要 `createComplexPolygon([[...]])`。
 - `pcb_Document.autoRouting()`（嘉立创自带布线器）返回 `{totalNetsCount, successNetsCount, failedNets}`；只有一个焊盘的网络会出现在 failedNets，属正常。
 - 导入的工程带的是别的软件算好的铺铜填充，会压到禁布区 → `pour.rebuildCopperRegion()` 重铺。
+- 铺铜实际填充：`pcb_PrimitivePoured.getAll()` → `getState_PourPrimitiveId()` 对应 `pcb_PrimitivePour`，`getState_PourFills()` 每项 `{path:{complexPolygon}, fill, lineWidth}`，**坐标单位 10mil**（×0.254=mm，与其他图元的 mil 不同）。`complexPolygon` 是多环列表，按奇偶规则合成（首环不一定是外环）；`'ARC'` 后跟 `[扫角°, 终点x, 终点y]`，要按真实圆弧展开，用弦近似会凭空补出细铜颈；`fill:false, lineWidth:1` 的条目是**热焊辐条**（描边折线），漏掉它所有热焊焊盘都会被误判孤立。`pcbgeo.py` 已处理。
+- 焊盘 `getState_Rotation()` 可能返回 `null`；`getState_Pad()` 为 `['POLYGON', [x,y,'L',…]]` 时是**绝对坐标 mil** 的多边形，没有宽高。旧版 `pcb_dump.js` 导出 null 会让 `pcb_check.py`/`pcb_render.py` 崩溃，现已修正。
+- `OVAL` 是跑道形（短边直径的两端半圆），`ELLIPSE` 宽高不等时是椭圆；用"矩形先内缩再外扩"近似会得到空几何。
+- 自建脚本里**不要再声明 `mm`/`MM`**：`lceda.py` 会先拼上 lib.js，重复 `const mm` 直接 `SYNTAX_ERROR: Identifier 'mm' has already been declared`。
 
 ## DRC
 
 - `pcb_Drc.check(true, false, true)` 返回**多层嵌套分组**，直接 return 会刷出上百 KB；用 lib.js 的 `drcSummary()` 摊平计数。
 - **导入工程的默认规则要求过孔孔径 ≥0.5mm**（嘉立创实际 0.3mm），导致每个过孔报 Via Size。改规则：`overwriteCurrentRuleConfiguration(cfg.config)`——**传 `config` 字段本身**，传整个对象返回 false。
+- **`Connection Error … is disconnected from other objects of the same network` 报的是孤岛之间缺失飞线的一个端点**（DRC 按最短连接选点），可能是主地上的过孔或焊盘；把它当"孤岛代表"去补线会补错地方，且补完换个点继续报。用 `gnd_islands.py` 按实际填充算出真孤岛再修。
+- 同坐标重复的 GND 过孔报 `Hole to Hole`（两孔圆心距 0），先按坐标去重再看其他问题。
+- 铺铜规则 `Copper Zone` 的 `connectMode:0` 是热焊（辐条 0.254mm）；BGA/QFN 式模组 EPAD 的子焊盘彼此相距很近时，辐条可能生成失败，EPAD 在两层都被整圈让开、只剩焊盘自身——需要手工补 GND 走线。
 - 规则里 `viaInnerdiameter*` 实际是**孔径**、`viaOuterdiameter*` 实际是**外径**（字段名与含义相反），以 DRC 报错文字为准。
 
 ## 文件进出

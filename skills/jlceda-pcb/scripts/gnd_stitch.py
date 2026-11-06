@@ -26,7 +26,8 @@ TOP, BOT, MULTI = 1, 2, 12
 # 障碍：(net, layers, kind, geom)  kind: 'rect'(x1,y1,x2,y2) / 'seg'(x1,y1,x2,y2,w) / 'circ'(x,y,r)
 obs = []
 for ref, c in d['comps'].items():
-    for num, net, x, y, sh, w, h, rot, lay in c['pads']:
+    for num, net, x, y, sh, w, h, rot, lay, *_ in c['pads']:
+        w, h = w or 0.1, h or 0.1
         r = math.radians(rot or 0)
         hw = abs(math.cos(r)) * w / 2 + abs(math.sin(r)) * h / 2; hh = abs(math.sin(r)) * w / 2 + abs(math.cos(r)) * h / 2
         obs.append((net, 'all' if lay == MULTI else lay, 'rect', (x - hw, y - hh, x + hw, y + hh)))
